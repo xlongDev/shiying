@@ -35,6 +35,12 @@ scripts/
 # local tooling data (not application source)
 .workbuddy/
 
+# one-off review artifacts (not version-controlled)
+前端架构评审报告.md
+REVIEW-*.md
+ARCHITECTURE-REVIEW.md
+UPGRADE-REPORT.md
+
 # server-side ffmpeg binary: deployment provides it via PATH or bin/ffmpeg.
 # getFfmpegPath() already falls back to system `ffmpeg`, so it is not committed.
 bin/ffmpeg
