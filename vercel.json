@@ -1,1 +1,12 @@
-{"$schema": "https://openapi.vercel.sh/vercel.json", "framework": "nextjs", "functions": {"src/app/api/parse/route.ts": {"maxDuration": 30}, "src/app/api/parse-live-photo/route.ts": {"maxDuration": 60}, "src/app/api/proxy/route.ts": {"maxDuration": 30}, "src/app/api/proxy-media/route.ts": {"maxDuration": 30}, "src/app/api/stream/route.ts": {"maxDuration": 60}, "src/app/api/download-music/route.ts": {"maxDuration": 30}}}
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/parse/route.ts": { "maxDuration": 30 },
+    "src/app/api/parse-live-photo/route.ts": { "maxDuration": 60 },
+    "src/app/api/proxy/route.ts": { "maxDuration": 30 },
+    "src/app/api/proxy-media/route.ts": { "maxDuration": 30 },
+    "src/app/api/stream/route.ts": { "maxDuration": 60 },
+    "src/app/api/download-music/route.ts": { "maxDuration": 30 }
+  }
+}
