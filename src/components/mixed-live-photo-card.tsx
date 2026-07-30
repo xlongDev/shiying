@@ -2,17 +2,9 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import {
-  Check,
-  Music,
-  Film,
-  Video,
-  Image as ImageIcon,
-  Loader2,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Music, Film, Video, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
+import { DownloadButton } from "@/components/download-button";
 import { GlassVideoControls } from "@/components/glass-video-controls";
 import { GlassAudioControls } from "@/components/glass-audio-controls";
 import { cn } from "@/lib/utils";
@@ -85,15 +77,6 @@ export function MixedLivePhotoCard({
   const batchContainerVariants = {
     hidden: {},
     show: { transition: { staggerChildren: 0.06, delayChildren: 0.08 } },
-  };
-  const batchButtonVariants = {
-    hidden: { opacity: 0, y: reduce ? 0 : 8, scale: reduce ? 1 : 0.96 },
-    show: {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] },
-    },
   };
 
   const currentLp = livePhotos[selectedLiveIndex] || livePhotos[0];
@@ -238,112 +221,47 @@ export function MixedLivePhotoCard({
           </motion.div>
         ) : (
           <motion.div variants={itemVariants}>
-            <button
+            <DownloadButton
+              state={musicState}
+              idleIcon={Music}
+              label="点击获取原帖背景音乐"
+              loadingLabel="正在获取背景音乐..."
+              doneLabel="背景音乐已获取，可在上方播放"
               onClick={onDownloadMixedMusic}
-              disabled={musicState === "downloading"}
-              className="w-full flex items-center gap-2 glass rounded-xl px-3 py-2 border border-dashed border-purple-400/30 hover:border-purple-400/60 transition-colors disabled:opacity-60"
-            >
-              {musicState === "downloading" ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
-                  <span className="text-xs text-muted-foreground">正在获取背景音乐...</span>
-                </>
-              ) : musicState === "done" ? (
-                <>
-                  <Check className="h-4 w-4 text-emerald-400" />
-                  <span className="text-xs text-emerald-600">背景音乐已获取，可在上方播放</span>
-                </>
-              ) : (
-                <>
-                  <Music className="h-4 w-4 text-purple-400/60" />
-                  <span className="text-xs text-muted-foreground">点击获取原帖背景音乐</span>
-                </>
-              )}
-            </button>
+              animated={false}
+              className="w-full !py-2.5 !px-3 border border-dashed border-purple-400/30 hover:border-purple-400/60 disabled:opacity-60 text-xs"
+            />
           </motion.div>
         )}
 
         <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <motion.button
+          <DownloadButton
+            state={imageState}
+            idleIcon={ImageIcon}
+            label="静态原图"
             onClick={onDownloadSelectedImage}
-            disabled={imageState === "downloading"}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="glass rounded-xl py-2 text-xs font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50"
-          >
-            {imageState === "downloading" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                下载中
-              </>
-            ) : imageState === "done" ? (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                已下载
-              </>
-            ) : (
-              <>
-                <ImageIcon className="h-3.5 w-3.5" />
-                静态原图
-              </>
-            )}
-          </motion.button>
+          />
 
-          <motion.button
+          <DownloadButton
+            state={videoState}
+            idleIcon={Video}
+            label="动态短片"
             onClick={onDownloadSelectedVideo}
-            disabled={videoState === "downloading" || !currentLp?.videoUrl}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="glass rounded-xl py-2 text-xs font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={!currentLp?.videoUrl ? "该实况无动态短片" : ""}
-          >
-            {videoState === "downloading" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                下载中
-              </>
-            ) : videoState === "done" ? (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                已下载
-              </>
-            ) : (
-              <>
-                <Video className="h-3.5 w-3.5" />
-                动态短片
-              </>
-            )}
-          </motion.button>
+            disabled={!currentLp?.videoUrl}
+            title={!currentLp?.videoUrl ? "该实况无动态短片" : undefined}
+          />
 
-          <motion.button
+          <DownloadButton
+            state={musicState}
+            idleIcon={Music}
+            label={video.musicUrl ? "背景音乐" : "获取音乐"}
+            loadingLabel="获取中"
             onClick={onDownloadMixedMusic}
-            disabled={musicState === "downloading"}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className={cn(
-              "glass rounded-xl py-2 text-xs font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors",
-              !video.musicUrl ? "border border-dashed border-purple-400/40" : "",
-              "disabled:opacity-60"
-            )}
+            className={
+              !video.musicUrl ? "border border-dashed border-purple-400/40 disabled:opacity-60" : ""
+            }
             title={!video.musicUrl ? "尝试从原帖获取背景音乐" : "下载背景音乐"}
-          >
-            {musicState === "downloading" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                获取中
-              </>
-            ) : musicState === "done" ? (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                已下载
-              </>
-            ) : (
-              <>
-                <Music className="h-3.5 w-3.5" />
-                {video.musicUrl ? "背景音乐" : "获取音乐"}
-              </>
-            )}
-          </motion.button>
+          />
         </motion.div>
 
         <motion.div variants={itemVariants}>
@@ -388,33 +306,30 @@ export function MixedLivePhotoCard({
                   animate={batchOpen ? "show" : "hidden"}
                   className="grid grid-cols-3 gap-1.5 mt-2 pl-4"
                 >
-                  <motion.button
-                    variants={batchButtonVariants}
+                  <DownloadButton
+                    state={imageState}
+                    idleIcon={ImageIcon}
+                    label="全部原图"
                     onClick={onDownloadLiveImages}
-                    disabled={imageState === "downloading"}
-                    whileHover={{ scale: 1.01 }}
-                    className="glass rounded-lg py-1.5 text-[10px] font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50"
-                  >
-                    <ImageIcon className="h-3 w-3" /> 全部原图
-                  </motion.button>
-                  <motion.button
-                    variants={batchButtonVariants}
+                    animated={false}
+                    className="!py-1.5 text-[10px] rounded-lg"
+                  />
+                  <DownloadButton
+                    state={videoState}
+                    idleIcon={Video}
+                    label="全部短片"
                     onClick={onDownloadLiveVideos}
-                    disabled={videoState === "downloading"}
-                    whileHover={{ scale: 1.01 }}
-                    className="glass rounded-lg py-1.5 text-[10px] font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50"
-                  >
-                    <Video className="h-3 w-3" /> 全部短片
-                  </motion.button>
-                  <motion.button
-                    variants={batchButtonVariants}
+                    animated={false}
+                    className="!py-1.5 text-[10px] rounded-lg"
+                  />
+                  <DownloadButton
+                    state={composeState}
+                    idleIcon={Film}
+                    label="快速合并"
                     onClick={onComposeMixedLive}
-                    disabled={composeState === "downloading"}
-                    whileHover={{ scale: 1.01 }}
-                    className="glass rounded-lg py-1.5 text-[10px] font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50"
-                  >
-                    <Film className="h-3 w-3" /> 快速合并
-                  </motion.button>
+                    animated={false}
+                    className="!py-1.5 text-[10px] rounded-lg"
+                  />
                 </motion.div>
               </motion.div>
             </div>

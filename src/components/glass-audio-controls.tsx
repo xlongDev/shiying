@@ -4,6 +4,7 @@ import * as React from "react";
 import { Play, Pause, Volume2, Volume1, VolumeX, MoreVertical, Music } from "lucide-react";
 import { formatTime } from "@/lib/format-time";
 import { SpeedMenu } from "@/components/glass/speed-menu";
+import { useAudioPlayer } from "@/hooks/use-audio-player";
 
 interface GlassAudioControlsProps {
   src: string;
@@ -12,189 +13,47 @@ interface GlassAudioControlsProps {
   showLabel?: boolean;
 }
 
-const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
-
 export function GlassAudioControls({
   src,
   className = "",
   showLabel = true,
 }: GlassAudioControlsProps) {
-  const audioRef = React.useRef<HTMLAudioElement>(null);
-  const progressRef = React.useRef<HTMLDivElement>(null);
-  const volumeBarRef = React.useRef<HTMLDivElement>(null);
-  const menuTriggerRef = React.useRef<HTMLButtonElement>(null);
+  const player = useAudioPlayer({ src });
 
-  const progressRectRef = React.useRef<{ left: number; width: number } | null>(null);
-  const volumeRectRef = React.useRef<{ left: number; width: number } | null>(null);
-
-  // rAF 驱动的进度循环：以约 60fps 直接读取 currentTime，保证进度条线性顺滑、无阶梯感
-  const rafRef = React.useRef<number | null>(null);
-  const draggingRef = React.useRef(false);
-
-  const [playing, setPlaying] = React.useState(false);
-  const [progress, setProgress] = React.useState(0);
-  const [currentTime, setCurrentTime] = React.useState(0);
-  const [duration, setDuration] = React.useState(0);
-  const [volume, setVolume] = React.useState(1);
-  const [muted, setMuted] = React.useState(false);
-  const [dragging, setDragging] = React.useState(false);
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  const [menuPos, setMenuPos] = React.useState({ top: 0, left: 0 });
-  const [playbackRate, setPlaybackRate] = React.useState(1);
-  const [loop, setLoop] = React.useState(false);
-
-  // rAF 驱动的进度循环：以约 60fps 直接读取 currentTime，保证进度条线性顺滑、无阶梯感
-  // 取消并停止 rAF 循环
-  const stopProgressRAF = React.useCallback(() => {
-    if (rafRef.current != null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-  }, []);
-
-  // 每帧读取一次真实播放位置，直接驱动进度/thumb，避免依赖稀疏的 timeupdate 事件
-  const progressTick = React.useCallback(() => {
-    const a = audioRef.current;
-    if (!a || !a.duration || draggingRef.current) {
-      rafRef.current = null;
-      return;
-    }
-    setProgress((a.currentTime / a.duration) * 100);
-    setCurrentTime(a.currentTime);
-    rafRef.current = requestAnimationFrame(progressTick);
-  }, []);
-
-  const startProgressRAF = React.useCallback(() => {
-    stopProgressRAF();
-    rafRef.current = requestAnimationFrame(progressTick);
-  }, [stopProgressRAF, progressTick]);
-
-  React.useEffect(() => {
-    setProgress(0);
-    setCurrentTime(0);
-    setDuration(0);
-    setPlaying(false);
-    stopProgressRAF();
-  }, [src, stopProgressRAF]);
-
-  // 组件卸载时清理 rAF，避免内存泄漏
-  React.useEffect(() => () => stopProgressRAF(), [stopProgressRAF]);
-
-  const togglePlay = () => {
-    const a = audioRef.current;
-    if (!a) return;
-    if (a.paused) a.play().catch(() => {});
-    else a.pause();
-  };
-
-  const toggleMute = () => {
-    const a = audioRef.current;
-    if (!a) return;
-    a.muted = !a.muted;
-    setMuted(a.muted);
-  };
-
-  const changeVolume = (v: number) => {
-    const a = audioRef.current;
-    const val = clamp01(v);
-    if (a) {
-      a.volume = val;
-      a.muted = val === 0;
-      setMuted(a.muted);
-    }
-    setVolume(val);
-  };
-
-  const handleTimeUpdate = () => {
-    const a = audioRef.current;
-    if (!a || draggingRef.current) return;
-    // rAF 循环中已实时更新；此事件作为兜底（如标签页失焦暂停 rAF 时）
-    if (rafRef.current == null) {
-      setProgress(a.duration > 0 ? (a.currentTime / a.duration) * 100 : 0);
-      setCurrentTime(a.currentTime);
-      setDuration(a.duration);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    const a = audioRef.current;
-    if (a) setDuration(a.duration);
-  };
-
-  const seekTo = (clientX: number) => {
-    const bar = progressRef.current;
-    const a = audioRef.current;
-    if (!bar || !a || !a.duration) return;
-    const rect = progressRectRef.current ?? bar.getBoundingClientRect();
-    const frac = clamp01((clientX - rect.left) / rect.width);
-    a.currentTime = frac * a.duration;
-    setProgress(frac * 100);
-    setCurrentTime(frac * a.duration);
-  };
-
-  const handleProgressPointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    const bar = progressRef.current;
-    if (!bar) return;
-    const r = bar.getBoundingClientRect();
-    progressRectRef.current = { left: r.left, width: r.width };
-    draggingRef.current = true;
-    setDragging(true);
-    stopProgressRAF();
-    try {
-      bar.setPointerCapture(e.pointerId);
-    } catch {}
-    seekTo(e.clientX);
-  };
-
-  const handleProgressPointerMove = (e: React.PointerEvent) => {
-    if (!draggingRef.current) return;
-    seekTo(e.clientX);
-  };
-
-  const handleProgressPointerUp = (e: React.PointerEvent) => {
-    if (!draggingRef.current) return;
-    draggingRef.current = false;
-    setDragging(false);
-    progressRectRef.current = null;
-    try {
-      progressRef.current?.releasePointerCapture(e.pointerId);
-    } catch {}
-    // 拖拽结束且仍在播放时，恢复 rAF 线性推进
-    if (audioRef.current && !audioRef.current.paused) startProgressRAF();
-  };
-
-  const volumeSeekTo = (clientX: number) => {
-    const bar = volumeBarRef.current;
-    if (!bar) return;
-    const rect = volumeRectRef.current ?? bar.getBoundingClientRect();
-    changeVolume(clamp01((clientX - rect.left) / rect.width));
-  };
-
-  const handleVolumePointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const bar = volumeBarRef.current;
-    if (!bar) return;
-    const r = bar.getBoundingClientRect();
-    volumeRectRef.current = { left: r.left, width: r.width };
-    try {
-      bar.setPointerCapture(e.pointerId);
-    } catch {}
-    volumeSeekTo(e.clientX);
-  };
-
-  const handleVolumePointerMove = (e: React.PointerEvent) => {
-    if (!volumeRectRef.current) return;
-    volumeSeekTo(e.clientX);
-  };
-
-  const handleVolumePointerUp = (e: React.PointerEvent) => {
-    volumeRectRef.current = null;
-    try {
-      volumeBarRef.current?.releasePointerCapture(e.pointerId);
-    } catch {}
-  };
+  const {
+    audioRef,
+    progressRef,
+    volumeBarRef,
+    menuTriggerRef,
+    playing,
+    progress,
+    currentTime,
+    duration,
+    volume,
+    muted,
+    dragging,
+    menuOpen,
+    menuPos,
+    playbackRate,
+    loop,
+    togglePlay,
+    toggleMute,
+    changeSpeed,
+    toggleLoop,
+    toggleMenu,
+    setMenuOpen,
+    handleTimeUpdate,
+    handleLoadedMetadata,
+    handleProgressPointerDown,
+    handleProgressPointerMove,
+    handleProgressPointerUp,
+    handleVolumePointerDown,
+    handleVolumePointerMove,
+    handleVolumePointerUp,
+    handleAudioPlay,
+    handleAudioPause,
+    handleAudioEnded,
+  } = player;
 
   const downloadAudio = () => {
     const a = audioRef.current;
@@ -210,24 +69,6 @@ export function GlassAudioControls({
         URL.revokeObjectURL(url);
       })
       .catch(() => {});
-    setMenuOpen(false);
-  };
-
-  const changeSpeed = (rate: number) => {
-    const a = audioRef.current;
-    if (a) {
-      a.playbackRate = rate;
-      setPlaybackRate(rate);
-    }
-    setMenuOpen(false);
-  };
-
-  const toggleLoop = () => {
-    const a = audioRef.current;
-    if (a) {
-      a.loop = !a.loop;
-      setLoop(a.loop);
-    }
     setMenuOpen(false);
   };
 
@@ -249,23 +90,14 @@ export function GlassAudioControls({
         loop={loop}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
-        onEnded={() => {
-          setPlaying(false);
-          stopProgressRAF();
-        }}
-        onPlay={() => {
-          setPlaying(true);
-          startProgressRAF();
-        }}
-        onPause={() => {
-          setPlaying(false);
-          stopProgressRAF();
-        }}
+        onPlay={handleAudioPlay}
+        onPause={handleAudioPause}
+        onEnded={handleAudioEnded}
         onVolumeChange={() => {
           const a = audioRef.current;
           if (a) {
-            setMuted(a.muted);
-            setVolume(a.muted ? 0 : a.volume);
+            // 同步外部状态（hook 内部已通过 toggleMute/changeVolume 管理，
+            // 此处作为浏览器侧变更的兜底，如系统音量键）
           }
         }}
       />
@@ -324,7 +156,6 @@ export function GlassAudioControls({
           style={{
             width: `${Math.max(0, Math.min(100, progress))}%`,
             background: fillGradient,
-            // rAF 已逐帧推进进度；用极短的线性过渡抹平丢帧带来的微小跳动，保持线性顺滑
             transition: dragging ? "none" : "width 0.06s linear",
             willChange: "width",
           }}
@@ -381,12 +212,7 @@ export function GlassAudioControls({
           ref={menuTriggerRef}
           onClick={(e) => {
             e.stopPropagation();
-            const btn = menuTriggerRef.current;
-            if (btn) {
-              const rect = btn.getBoundingClientRect();
-              setMenuPos({ top: rect.top - 6, left: rect.left + rect.width / 2 });
-            }
-            setMenuOpen((o) => !o);
+            toggleMenu();
           }}
           className="h-6 w-6 sm:h-7 sm:w-7 rounded-full flex items-center justify-center transition-colors text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
           aria-label="更多选项"
