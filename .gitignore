@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# next.js build output
+.next/
+out/
+build/
+
+# pnpm local store (project-root cache)
+.pnpm-store/
+
+# typescript / next build info
+*.tsbuildinfo
+next-env.d.ts
+
+# logs
+*.log
+
+# env / secrets
+.env*
+!.env.example
+
+# temporary scratch files
+_tmp_*
+--port:*
+
+# local tooling data (not application source)
+.workbuddy/
+
+# server-side ffmpeg binary: deployment provides it via PATH or bin/ffmpeg.
+# getFfmpegPath() already falls back to system `ffmpeg`, so it is not committed.
+bin/ffmpeg
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

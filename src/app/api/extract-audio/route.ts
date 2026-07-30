@@ -1,0 +1,500 @@
+import { NextRequest, NextResponse } from "next/server";
+import { spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { Readable } from "stream";
+import { ffmpegSemaphore } from "@/lib/concurrency";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+/**
+ * 音频提取代理：从视频中提取音频流 (MP3)
+ *
+ * 用法：GET /api/extract-audio?url=xxx&filename=xxx
+ *
+ * 流程：
+ *   1. 获取视频流（与 /api/proxy 相同的 header 处理）
+ *   2. 将视频流写入临时文件
+ *   3. 调用 ffmpeg 从临时文件提取音频并转码为 MP3
+ *   4. 返回 MP3 文件给客户端下载
+ *   5. 清理临时文件
+ *
+ * 安全加固：
+ *   - ffmpeg 并发受 ffmpegSemaphore 限制（最多 2 个），release 在 finally 中执行。
+ *   - getFfmpegPath() 结果在模块作用域缓存，避免每次调用都重新探测。
+ *   - 临时文件在所有返回 / 异常路径均由外层 finally 统一清理。
+ */
+// 模块级缓存：ffmpeg 探测结果只计算一次。
+let cachedFfmpegPath: string | undefined;
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const targetUrl = searchParams.get("url");
+  const filename = searchParams.get("filename") || "audio.mp3";
+  const awemeId = searchParams.get("awemeId") || "";
+  let videoTempPath = "";
+  let audioTempPath = "";
+
+  if (!targetUrl) {
+    return NextResponse.json({ ok: false, error: "缺少 url 参数" }, { status: 400 });
+  }
+
+  // 查找 ffmpeg 路径（结果已缓存）
+  const ffmpegPath = await getFfmpegPath();
+  if (!ffmpegPath) {
+    return NextResponse.json(
+      { ok: false, error: "服务器未安装 ffmpeg，无法提取音频" },
+      { status: 501 }
+    );
+  }
+
+  try {
+    // 获取真实视频 URL（处理 snssdk 重定向）
+    let finalUrl = targetUrl;
+    const isSnssdk = targetUrl.includes("snssdk") && targetUrl.includes("/play");
+    if (isSnssdk) {
+      try {
+        const probe = await fetch(targetUrl, {
+          headers: getHeaders(targetUrl),
+          redirect: "manual",
+        });
+        if (probe.status >= 300 && probe.status < 400) {
+          const loc = probe.headers.get("location");
+          if (loc) finalUrl = loc;
+        }
+      } catch {
+        // 使用原始 URL
+      }
+    }
+
+    // 下载视频流到临时文件
+    const videoRes = await fetch(finalUrl, {
+      headers: getHeaders(finalUrl),
+      redirect: "follow",
+    });
+
+    if (!videoRes.ok || !videoRes.body) {
+      console.error(
+        `[extract-audio] upstream failed: ${videoRes.status} for ${finalUrl.substring(0, 120)}`
+      );
+      return NextResponse.json(
+        { ok: false, error: `获取视频流失败：HTTP ${videoRes.status}` },
+        { status: 502 }
+      );
+    }
+
+    const contentType = videoRes.headers.get("content-type") || "";
+
+    // 简单校验：返回的是 JSON 或 HTML 错误页（不是视频流）
+    if (contentType.includes("json") || contentType.includes("html")) {
+      console.error(`[extract-audio] upstream returned non-video content-type: ${contentType}`);
+      return NextResponse.json(
+        { ok: false, error: "上游返回的不是视频流，无法提取音频" },
+        { status: 502 }
+      );
+    }
+
+    // 写入临时视频文件
+    videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}.mp4`);
+    audioTempPath = path.join(os.tmpdir(), `extract-audio-audio-${Date.now()}.mp3`);
+
+    await streamToFile(
+      videoRes.body as unknown as import("stream/web").ReadableStream,
+      videoTempPath
+    );
+
+    // 检查视频文件大小 — 如果太小，尝试 snssdk play URL 重试
+    let videoStats = fs.statSync(videoTempPath);
+    const videoTooSmall = videoStats.size < 10240; // 10KB 阈值
+
+    if (videoTooSmall) {
+      console.warn(
+        `[extract-audio] downloaded video too small (${videoStats.size} bytes), trying fallback`
+      );
+
+      // 优先从 URL 中提取 video_id 构造 snssdk URL
+      let videoId = extractVideoId(targetUrl);
+
+      // 如果从 URL 提取不到 video_id（CDN URL 通常不含此参数），
+      // 且有 awemeId，则通过 iesdouyin iteminfo API 获取最新视频 URL
+      if (!videoId && awemeId) {
+        videoId = await getVideoIdFromApi(awemeId);
+      }
+
+      if (videoId) {
+        try {
+          // 删除已被覆盖的旧临时文件，再重新分配路径
+          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
+          // 重新生成临时文件路径
+          videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}-v2.mp4`);
+
+          const snssdkUrl = `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`;
+          console.log(`[extract-audio] retrying with snssdk: ${snssdkUrl}`);
+
+          const snssdkRes = await fetch(snssdkUrl, {
+            headers: getHeaders(snssdkUrl),
+            redirect: "follow",
+          });
+
+          if (snssdkRes.ok && snssdkRes.body) {
+            await streamToFile(
+              snssdkRes.body as unknown as import("stream/web").ReadableStream,
+              videoTempPath
+            );
+            videoStats = fs.statSync(videoTempPath);
+            console.log(`[extract-audio] snssdk retry downloaded ${videoStats.size} bytes`);
+          }
+        } catch (retryErr) {
+          console.error("[extract-audio] snssdk retry failed:", retryErr);
+          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
+        }
+      } else if (awemeId) {
+        // 有 awemeId 但获取不到 video_id → 直接用 iteminfo API 的 play_addr URL 下载
+        console.warn(
+          `[extract-audio] no video_id found, trying direct iteminfo play_addr with awemeId=${awemeId}`
+        );
+        try {
+          const directUrl = await getDirectVideoUrl(awemeId);
+          if (directUrl) {
+            if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
+            videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}-v3.mp4`);
+            const directRes = await fetch(directUrl, {
+              headers: getHeaders(directUrl),
+              redirect: "follow",
+            });
+            if (directRes.ok && directRes.body) {
+              await streamToFile(
+                directRes.body as unknown as import("stream/web").ReadableStream,
+                videoTempPath
+              );
+              videoStats = fs.statSync(videoTempPath);
+              console.log(
+                `[extract-audio] direct iteminfo retry downloaded ${videoStats.size} bytes`
+              );
+            } else if (fs.existsSync(videoTempPath)) {
+              fs.unlinkSync(videoTempPath);
+            }
+          }
+        } catch (directErr) {
+          console.error("[extract-audio] direct iteminfo retry failed:", directErr);
+          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
+        }
+      }
+    }
+
+    // 最终检查视频文件大小
+    if (videoStats.size < 10240) {
+      return NextResponse.json(
+        { ok: false, error: "下载的视频流为空，无法提取音频" },
+        { status: 502 }
+      );
+    }
+
+    // 调用 ffmpeg 提取音频（并发受信号量限制）
+    await ffmpegSemaphore.acquire();
+    try {
+      await extractAudioWithFfmpeg(ffmpegPath, videoTempPath, audioTempPath);
+    } finally {
+      ffmpegSemaphore.release();
+    }
+
+    // 检查音频文件大小
+    const audioStats = fs.statSync(audioTempPath);
+    if (audioStats.size < 1024) {
+      return NextResponse.json(
+        { ok: false, error: "提取的音频文件为空，该视频可能没有音轨" },
+        { status: 502 }
+      );
+    }
+
+    // 读取音频文件并返回（读取完成后再清理临时文件）
+    const audioBuffer = fs.readFileSync(audioTempPath);
+
+    const responseHeaders = new Headers({
+      "Content-Type": "audio/mpeg",
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Content-Length": String(audioStats.size),
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    return new NextResponse(audioBuffer, {
+      status: 200,
+      headers: responseHeaders,
+    });
+  } catch (err) {
+    console.error("[extract-audio] error:", err);
+    return NextResponse.json(
+      { ok: false, error: err instanceof Error ? err.message : "音频提取失败" },
+      { status: 500 }
+    );
+  } finally {
+    // 所有路径统一清理临时文件（成功 / 早返回 / 异常）
+    for (const p of [videoTempPath, audioTempPath]) {
+      try {
+        if (p && fs.existsSync(p)) fs.unlinkSync(p);
+      } catch {
+        // 忽略清理错误
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 辅助函数                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 从视频 URL 中提取 video_id
+ * 支持格式:
+ *   - aweme.snssdk.com/aweme/v1/play/?video_id=xxx
+ *   - aweme.snssdk.com/aweme/v1/playwm/?video_id=xxx
+ *   - douyinvod.com/...?video_id=xxx
+ */
+function extractVideoId(url: string): string | null {
+  const match = url.match(/[?&]video_id=([a-z0-9]+)/i);
+  return match ? match[1] : null;
+}
+
+const MOBILE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+
+/**
+ * 通过 iesdouyin iteminfo API 获取视频的 video_id
+ * 用于 CDN URL 已过期时从抖音官方 API 获取最新播放地址
+ */
+async function getVideoIdFromApi(awemeId: string): Promise<string | null> {
+  try {
+    const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`;
+    console.log(`[extract-audio] fetching iteminfo for awemeId=${awemeId}`);
+    const res = await fetch(apiUrl, {
+      headers: {
+        "user-agent": MOBILE_UA,
+        referer: "https://www.iesdouyin.com/",
+      },
+    });
+    if (!res.ok) {
+      console.error(`[extract-audio] iteminfo API failed: HTTP ${res.status}`);
+      return null;
+    }
+
+    const json = (await res.json()) as Record<string, unknown>;
+    const itemList = json.item_list as unknown[];
+    if (!Array.isArray(itemList) || itemList.length === 0) {
+      console.error("[extract-audio] iteminfo: no item_list");
+      return null;
+    }
+
+    const item = itemList[0] as Record<string, unknown>;
+    const video = (item.video ?? {}) as Record<string, unknown>;
+    const playAddr = (video.play_addr ?? {}) as Record<string, unknown>;
+    const urlList = playAddr.url_list as unknown[];
+
+    if (Array.isArray(urlList) && urlList.length > 0 && typeof urlList[0] === "string") {
+      const playUrl = urlList[0];
+      console.log(`[extract-audio] iteminfo play_addr: ${playUrl.substring(0, 120)}`);
+      // 从 play_addr URL 中提取 video_id
+      const vid = extractVideoId(playUrl);
+      if (vid) return vid;
+    }
+
+    // 也尝试从 uri 字段提取
+    if (typeof playAddr.uri === "string" && playAddr.uri) {
+      return playAddr.uri;
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[extract-audio] getVideoIdFromApi error:", err);
+    return null;
+  }
+}
+
+/**
+ * 通过 iesdouyin iteminfo API 获取视频的直接 CDN 播放地址
+ * 当 snssdk URL 也不可用时，直接用官方 CDN URL 下载
+ */
+async function getDirectVideoUrl(awemeId: string): Promise<string | null> {
+  try {
+    const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        "user-agent": MOBILE_UA,
+        referer: "https://www.iesdouyin.com/",
+      },
+    });
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as Record<string, unknown>;
+    const itemList = json.item_list as unknown[];
+    if (!Array.isArray(itemList) || itemList.length === 0) return null;
+
+    const item = itemList[0] as Record<string, unknown>;
+    const video = (item.video ?? {}) as Record<string, unknown>;
+    const playAddr = (video.play_addr ?? {}) as Record<string, unknown>;
+    const urlList = playAddr.url_list as unknown[];
+
+    if (Array.isArray(urlList) && urlList.length > 0 && typeof urlList[0] === "string") {
+      // 尝试去除水印（playwm → play）
+      const rawUrl = urlList[0];
+      const cleanUrl = rawUrl.replace("/playwm/", "/play/").replace("playwm", "play");
+      console.log(`[extract-audio] direct video URL: ${cleanUrl.substring(0, 120)}`);
+      return cleanUrl;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getHeaders(url: string): Record<string, string> {
+  const isDouyin =
+    url.includes("douyin") ||
+    url.includes("snssdk") ||
+    url.includes("douyinpic") ||
+    url.includes("byteimg") ||
+    url.includes("zjcdn") ||
+    url.includes("bytecdn") ||
+    url.includes("aweme") ||
+    url.includes("douyinstatic") ||
+    url.includes("douyinvod") ||
+    url.includes("ixigua");
+
+  const isTikTok = url.includes("tiktok") || url.includes("tiktokcdn") || url.includes("tiktokv");
+
+  const headers: Record<string, string> = {
+    "user-agent":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    accept: "*/*",
+    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+  };
+
+  if (isDouyin) {
+    headers["referer"] = "https://www.douyin.com/";
+  } else if (isTikTok) {
+    headers["referer"] = "https://www.tiktok.com/";
+  }
+
+  return headers;
+}
+
+/**
+ * 查找可用的 ffmpeg 可执行文件路径（结果在模块作用域缓存）
+ * 1. 项目 bin 目录 (./bin/ffmpeg)
+ * 2. 系统 PATH (ffmpeg)
+ */
+async function getFfmpegPath(): Promise<string | null> {
+  if (cachedFfmpegPath) return cachedFfmpegPath;
+
+  const candidates = [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "bin", "ffmpeg"),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "bin", "ffmpeg.exe"),
+    "ffmpeg",
+  ];
+
+  for (const candidate of candidates) {
+    if (await checkFfmpeg(candidate)) {
+      cachedFfmpegPath = candidate;
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function checkFfmpeg(ffmpegPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn(ffmpegPath, ["-version"], { stdio: "ignore" });
+      proc.on("error", () => resolve(false));
+      proc.on("exit", (code) => resolve(code === 0));
+      setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* ignore */
+        }
+        resolve(false);
+      }, 3000);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function streamToFile(
+  readableStream: import("stream/web").ReadableStream,
+  filePath: string
+): Promise<void> {
+  const nodeStream = Readable.fromWeb(
+    readableStream as unknown as import("stream/web").ReadableStream
+  );
+  const writeStream = fs.createWriteStream(filePath);
+
+  return new Promise((resolve, reject) => {
+    nodeStream.pipe(writeStream);
+    nodeStream.on("error", reject);
+    writeStream.on("finish", resolve);
+    writeStream.on("error", reject);
+  });
+}
+
+function extractAudioWithFfmpeg(
+  ffmpegPath: string,
+  videoPath: string,
+  audioPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-i",
+      videoPath,
+      "-vn",
+      "-acodec",
+      "libmp3lame",
+      "-ab",
+      "192k",
+      "-ar",
+      "44100",
+      "-f",
+      "mp3",
+      "-y",
+      audioPath,
+    ];
+
+    const ffmpeg = spawn(ffmpegPath, args);
+    const errorChunks: string[] = [];
+
+    ffmpeg.stderr.on("data", (chunk: Buffer) => {
+      errorChunks.push(chunk.toString());
+      if (errorChunks.join("").length > 50000) {
+        errorChunks.shift();
+      }
+    });
+
+    ffmpeg.on("error", (err) => {
+      reject(err);
+    });
+
+    ffmpeg.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        const stderr = errorChunks.join("").slice(-1000);
+        console.error(`[extract-audio] ffmpeg exited with code ${code}: ${stderr}`);
+        reject(new Error(`ffmpeg 处理失败 (code ${code})`));
+      }
+    });
+
+    setTimeout(() => {
+      try {
+        ffmpeg.kill();
+      } catch {
+        /* ignore */
+      }
+      reject(new Error("ffmpeg 处理超时"));
+    }, 240000);
+  });
+}

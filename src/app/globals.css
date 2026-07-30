@@ -1,0 +1,532 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
+  --radius-3xl: calc(var(--radius) + 24px);
+}
+
+/* ===== 浅色主题：奶白基底 + 青/粉/紫渐变光晕 ===== */
+:root {
+  --radius: 1.25rem;
+  --background: oklch(0.99 0.005 280);
+  --foreground: oklch(0.18 0.02 280);
+  --card: oklch(1 0 0 / 60%);
+  --card-foreground: oklch(0.18 0.02 280);
+  --popover: oklch(1 0 0 / 80%);
+  --popover-foreground: oklch(0.18 0.02 280);
+  --primary: oklch(0.62 0.22 350);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0.01 280);
+  --secondary-foreground: oklch(0.25 0.02 280);
+  --muted: oklch(0.96 0.01 280);
+  --muted-foreground: oklch(0.5 0.02 280);
+  --accent: oklch(0.95 0.03 200);
+  --accent-foreground: oklch(0.25 0.02 280);
+  --destructive: oklch(0.62 0.24 25);
+  --border: oklch(0.9 0.01 280 / 60%);
+  --input: oklch(0.95 0.01 280 / 80%);
+  --ring: oklch(0.62 0.22 350);
+  --chart-1: oklch(0.62 0.22 350);
+  --chart-2: oklch(0.7 0.18 200);
+  --chart-3: oklch(0.75 0.18 160);
+  --chart-4: oklch(0.78 0.19 80);
+  --chart-5: oklch(0.65 0.24 20);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.18 0.02 280);
+  --sidebar-primary: oklch(0.62 0.22 350);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.96 0.01 280);
+  --sidebar-accent-foreground: oklch(0.25 0.02 280);
+  --sidebar-border: oklch(0.9 0.01 280 / 60%);
+  --sidebar-ring: oklch(0.62 0.22 350);
+
+  /* 液态玻璃专用变量 */
+  --glass-bg: oklch(1 0 0 / 55%);
+  --glass-border: oklch(1 0 0 / 70%);
+  --glass-highlight: oklch(1 0 0 / 90%);
+  --glass-shadow: 0 8px 32px oklch(0.3 0.05 280 / 12%);
+  --glass-blur: 24px;
+  --aurora-1: oklch(0.7 0.25 350 / 55%);
+  --aurora-2: oklch(0.72 0.2 200 / 50%);
+  --aurora-3: oklch(0.7 0.22 280 / 45%);
+}
+
+/* ===== 暗夜主题：深邃午夜蓝 + 霓虹光晕 ===== */
+.dark {
+  --background: oklch(0.13 0.02 280);
+  --foreground: oklch(0.97 0.01 280);
+  --card: oklch(0.18 0.02 280 / 50%);
+  --card-foreground: oklch(0.97 0.01 280);
+  --popover: oklch(0.18 0.02 280 / 80%);
+  --popover-foreground: oklch(0.97 0.01 280);
+  --primary: oklch(0.72 0.24 350);
+  --primary-foreground: oklch(0.13 0.02 280);
+  --secondary: oklch(0.22 0.02 280 / 60%);
+  --secondary-foreground: oklch(0.97 0.01 280);
+  --muted: oklch(0.22 0.02 280 / 60%);
+  --muted-foreground: oklch(0.68 0.02 280);
+  --accent: oklch(0.28 0.05 200 / 70%);
+  --accent-foreground: oklch(0.97 0.01 280);
+  --destructive: oklch(0.68 0.22 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 8%);
+  --ring: oklch(0.72 0.24 350);
+  --chart-1: oklch(0.72 0.24 350);
+  --chart-2: oklch(0.72 0.2 200);
+  --chart-3: oklch(0.75 0.2 160);
+  --chart-4: oklch(0.78 0.2 80);
+  --chart-5: oklch(0.7 0.24 20);
+  --sidebar: oklch(0.18 0.02 280);
+  --sidebar-foreground: oklch(0.97 0.01 280);
+  --sidebar-primary: oklch(0.72 0.24 350);
+  --sidebar-primary-foreground: oklch(0.13 0.02 280);
+  --sidebar-accent: oklch(0.22 0.02 280);
+  --sidebar-accent-foreground: oklch(0.97 0.01 280);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.24 350);
+
+  --glass-bg: oklch(0.2 0.02 280 / 45%);
+  --glass-border: oklch(1 0 0 / 12%);
+  --glass-highlight: oklch(1 0 0 / 18%);
+  --glass-shadow: 0 8px 32px oklch(0 0 0 / 40%);
+  --glass-blur: 28px;
+  --aurora-1: oklch(0.72 0.25 350 / 40%);
+  --aurora-2: oklch(0.72 0.2 200 / 35%);
+  --aurora-3: oklch(0.7 0.22 280 / 30%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+}
+
+/* ===== 液态玻璃核心样式 ===== */
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    position: relative;
+  }
+
+  .glass::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      var(--glass-highlight) 0%,
+      transparent 40%,
+      transparent 60%,
+      var(--glass-highlight) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  .glass-strong {
+    background: var(--glass-bg);
+    backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(200%);
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 8px)) saturate(200%);
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      var(--glass-shadow),
+      inset 0 1px 0 var(--glass-highlight);
+  }
+
+  /* 液态光泽高光 */
+  .glass-shine {
+    position: relative;
+    overflow: hidden;
+  }
+  .glass-shine::after {
+    content: "";
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      115deg,
+      transparent 30%,
+      var(--glass-highlight) 50%,
+      transparent 70%
+    );
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+  }
+  .glass-shine:hover::after {
+    opacity: 0.4;
+    animation: shine-sweep 1.2s ease;
+  }
+
+  @keyframes shine-sweep {
+    0% {
+      transform: translateX(-100%) translateY(-100%);
+    }
+    100% {
+      transform: translateX(50%) translateY(50%);
+    }
+  }
+
+  /* 极光背景光晕 */
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.7;
+    will-change: transform;
+  }
+  .aurora-blob-1 {
+    width: 50vw;
+    height: 50vw;
+    background: var(--aurora-1);
+    top: -10%;
+    left: -10%;
+    animation: aurora-float-1 18s ease-in-out infinite;
+  }
+  .aurora-blob-2 {
+    width: 45vw;
+    height: 45vw;
+    background: var(--aurora-2);
+    top: 30%;
+    right: -15%;
+    animation: aurora-float-2 22s ease-in-out infinite;
+  }
+  .aurora-blob-3 {
+    width: 40vw;
+    height: 40vw;
+    background: var(--aurora-3);
+    bottom: -10%;
+    left: 20%;
+    animation: aurora-float-3 26s ease-in-out infinite;
+  }
+
+  @keyframes aurora-float-1 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(15vw, 10vh) scale(1.15);
+    }
+    66% {
+      transform: translate(-5vw, 20vh) scale(0.9);
+    }
+  }
+  @keyframes aurora-float-2 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    50% {
+      transform: translate(-20vw, -15vh) scale(1.2);
+    }
+  }
+  @keyframes aurora-float-3 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(-10vw, -20vh) scale(1.1);
+    }
+    66% {
+      transform: translate(20vw, -5vh) scale(0.95);
+    }
+  }
+
+  /* 渐变文字 */
+  .text-gradient {
+    background: linear-gradient(
+      135deg,
+      oklch(0.72 0.24 350) 0%,
+      oklch(0.72 0.2 200) 50%,
+      oklch(0.7 0.22 280) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+
+  /* 液态按钮 */
+  .btn-liquid {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, oklch(0.72 0.24 350) 0%, oklch(0.68 0.22 320) 100%);
+    color: white;
+    box-shadow:
+      0 4px 20px oklch(0.72 0.24 350 / 40%),
+      inset 0 1px 0 oklch(1 0 0 / 30%);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-liquid:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow:
+      0 8px 30px oklch(0.72 0.24 350 / 55%),
+      inset 0 1px 0 oklch(1 0 0 / 40%);
+  }
+  .btn-liquid:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  /* 涟漪效果 */
+  .ripple {
+    position: relative;
+    overflow: hidden;
+  }
+  .ripple-effect {
+    position: absolute;
+    border-radius: 50%;
+    background: oklch(1 0 0 / 40%);
+    transform: scale(0);
+    animation: ripple-anim 0.6s ease-out;
+    pointer-events: none;
+  }
+  @keyframes ripple-anim {
+    to {
+      transform: scale(4);
+      opacity: 0;
+    }
+  }
+
+  /* 浮动动画 */
+  .float-anim {
+    animation: float 6s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-12px);
+    }
+  }
+
+  /* Logo 浮动动画 */
+  .logo-float {
+    animation: logo-float-anim 4s ease-in-out infinite;
+  }
+  @keyframes logo-float-anim {
+    0%,
+    100% {
+      transform: rotate(0deg) scale(1);
+    }
+    25% {
+      transform: rotate(4deg) scale(1.05);
+    }
+    75% {
+      transform: rotate(-4deg) scale(1.05);
+    }
+  }
+
+  /* 脉冲发光 */
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 20px oklch(0.72 0.24 350 / 30%);
+    }
+    50% {
+      box-shadow: 0 0 40px oklch(0.72 0.24 350 / 60%);
+    }
+  }
+
+  /* 加载骨架微光 */
+  .shimmer {
+    background: linear-gradient(90deg, transparent 0%, oklch(1 0 0 / 10%) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  /* 网格背景纹理 */
+  .grid-bg {
+    background-image:
+      linear-gradient(oklch(1 0 0 / 3%) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(1 0 0 / 3%) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+}
+
+/* ===== 实况探测动画（live-photo-panel 使用） =====
+   Tailwind v4 不再读取 tailwind.config.ts 中的 keyframes/animation，
+   必须直接在 CSS 中定义，否则 animate-lp-* 类不会被生成，探测卡片会静止。 */
+@keyframes lp-spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes lp-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.16);
+    opacity: 1;
+  }
+}
+@keyframes lp-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.12);
+  }
+}
+@keyframes lp-shimmer {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(330%);
+  }
+}
+@keyframes lp-pulse-text {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-lp-spin-slow {
+  animation: lp-spin-slow 9s linear infinite;
+}
+.animate-lp-pulse {
+  animation: lp-pulse 1.8s ease-in-out infinite;
+}
+.animate-lp-glow {
+  animation: lp-glow 2.4s ease-in-out infinite;
+}
+.animate-lp-shimmer {
+  animation: lp-shimmer 1.6s ease-in-out infinite;
+}
+.animate-lp-pulse-text {
+  animation: lp-pulse-text 1.8s ease-in-out infinite;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0.15 350 / 30%);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.7 0.15 350 / 50%);
+  background-clip: padding-box;
+}
+
+/* 选中文本颜色 */
+::selection {
+  background: oklch(0.72 0.24 350 / 30%);
+  color: inherit;
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
