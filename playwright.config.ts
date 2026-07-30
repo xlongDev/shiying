@@ -5,7 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
  * - webServer 启动 `pnpm dev`（端口 3000）。
  * - 仅 chromium 一个 project，跑 e2e/smoke.spec.ts。
  * - 因未预装浏览器二进制，本地需先 `pnpm exec playwright install chromium` 才能跑；
- *   CI 的 E2E job 当前在 .github/workflows/ci.yml 中注释保留，落地后再启用。
+ *   CI 的 E2E job 已在 .github/workflows/ci.yml 中启用（install --with-deps chromium 后跑 smoke）。
  */
 export default defineConfig({
   testDir: "./e2e",
