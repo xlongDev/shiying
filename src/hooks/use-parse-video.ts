@@ -5,6 +5,7 @@ import { useSound } from "@/components/sound-manager";
 import { toast } from "sonner";
 import type { ParsedVideo } from "@/lib/parser";
 import { useHistoryStore } from "@/store/history-store";
+import { logger } from "@/lib/logger";
 
 export interface UseParseVideo {
   loading: boolean;
@@ -103,7 +104,7 @@ export function useParseVideo(resultRef?: React.RefObject<HTMLDivElement | null>
         });
       }
     } catch (err) {
-      console.warn("[live-photo] 异步实况解析失败:", err);
+      logger.warn("live-photo", "异步实况解析失败:", err);
       // 静默模式：catch 也仅降级；非静默模式：标记失败（展示重试入口）
       if (base.livePhotoBackground) {
         setVideo({

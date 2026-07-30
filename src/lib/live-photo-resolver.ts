@@ -1,4 +1,6 @@
 import { findChromeExecutable } from "./chrome-finder";
+import { puppeteerSemaphore } from "./concurrency";
+import { logger } from "./logger";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -258,7 +260,7 @@ async function loadNotePage(
 ): Promise<import("puppeteer-core").Page | null> {
   const chromePath = findChromeExecutable();
   if (!chromePath) {
-    console.warn("[live-photo] 未找到系统 Chrome，跳过实况探测");
+    logger.warn("live-photo", "未找到系统 Chrome，跳过实况探测");
     return null;
   }
 
@@ -266,9 +268,12 @@ async function loadNotePage(
   try {
     puppeteer = await import("puppeteer-core");
   } catch (err) {
-    console.warn("[live-photo] puppeteer-core 未安装，跳过实况探测", err);
+    logger.warn("live-photo", "puppeteer-core 未安装，跳过实况探测", err);
     return null;
   }
+
+  // 限制并发拉起的 Chrome 实例数，避免 serverless 受限内存下同时多实例 OOM
+  await puppeteerSemaphore.acquire();
 
   let browser: import("puppeteer-core").Browser | null = null;
   try {
@@ -394,13 +399,32 @@ async function loadNotePage(
 
     return page;
   } catch (err) {
-    console.error("[live-photo] 加载 note 页面失败:", err);
+    logger.error("live-photo", "加载 note 页面失败:", err);
     try {
       if (browser) await browser.close();
     } catch {
       /* ignore */
     }
+    puppeteerSemaphore.release();
     return null;
+  }
+}
+
+/**
+ * 关闭实况探测页面并释放 puppeteer 并发许可。
+ * 与 loadNotePage 内的 acquire 配对；loadNotePage 自身失败路径也会释放，
+ * 此处仅在成功拿到 page 后由调用方 finally 调用，避免信号量许可泄漏导致排队死锁。
+ */
+async function closeNotePage(
+  page: import("puppeteer-core").Page | null
+): Promise<void> {
+  if (!page) return;
+  try {
+    await page.browser().close();
+  } catch {
+    /* ignore */
+  } finally {
+    puppeteerSemaphore.release();
   }
 }
 
@@ -427,15 +451,11 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
       }
       lastResult = lives;
     } catch (err) {
-      console.error(`[live-photo] 第${attempt}次提取实况视频失败:`, err);
+      logger.error("live-photo", `第${attempt}次提取实况视频失败:`, err);
     } finally {
-      try {
-        await page.browser().close();
-      } catch {
-        /* ignore */
-      }
+      await closeNotePage(page);
     }
-    console.warn(`[live-photo] 第${attempt}次单图实况探测为空，重试...`);
+    logger.warn("live-photo", `第${attempt}次单图实况探测为空，重试...`);
   }
 
   console.log(`[live-photo] 单图实况探测完成，耗时 ${Date.now() - startTime}ms，结果: 无实况`);
@@ -497,15 +517,11 @@ export async function resolveLivePhotosForSlides(
       }
       lastResult = lives;
     } catch (err) {
-      console.error(`[live-photo] 第${attempt}次混合实况探测失败:`, err);
+      logger.error("live-photo", `第${attempt}次混合实况探测失败:`, err);
     } finally {
-      try {
-        await page.browser().close();
-      } catch {
-        /* ignore */
-      }
+      await closeNotePage(page);
     }
-    console.warn(`[live-photo-slides] 第${attempt}次混合实况探测为空，重试...`);
+    logger.warn("live-photo-slides", `第${attempt}次混合实况探测为空，重试...`);
   }
 
   console.log(

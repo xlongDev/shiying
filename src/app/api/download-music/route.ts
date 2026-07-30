@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,7 +122,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "未找到可用的音频文件" }, { status: 404 });
     }
   } catch (err) {
-    console.error("[download-music] API error:", err);
+    logger.error("download-music", "API error:", err);
     return NextResponse.json({ ok: false, error: "获取音频信息失败" }, { status: 500 });
   }
 
@@ -137,8 +138,9 @@ export async function GET(req: NextRequest) {
     });
 
     if (!upstream.ok || !upstream.body) {
-      console.error(
-        `[download-music] upstream failed: ${upstream.status} for ${musicUrl.substring(0, 120)}`
+      logger.error(
+        "download-music",
+        `upstream failed: ${upstream.status} for ${musicUrl.substring(0, 120)}`
       );
       return NextResponse.json(
         { ok: false, error: `音频下载失败：HTTP ${upstream.status}` },
@@ -162,7 +164,7 @@ export async function GET(req: NextRequest) {
       headers,
     });
   } catch (err) {
-    console.error("[download-music] proxy error:", err);
+    logger.error("download-music", "proxy error:", err);
     return NextResponse.json({ ok: false, error: "音频下载失败" }, { status: 500 });
   }
 }

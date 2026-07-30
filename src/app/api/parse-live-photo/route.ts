@@ -1,11 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveLivePhotoVideoUrl, resolveLivePhotosForSlides } from "@/lib/live-photo-resolver";
 import type { LivePhotoInfo } from "@/lib/parser";
+import { rateLimit } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
+
+/** 从请求头提取客户端 IP（兼容反向代理 / 直连）。 */
+function getClientIp(req: NextRequest): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return req.headers.get("x-real-ip") ?? "unknown";
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  // 第一道闸：实况探测需拉起无头浏览器（高成本），限流更紧
+  const rl = rateLimit(`live:${getClientIp(req)}`, 6, 60_000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { ok: false, error: "实况探测请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
+      }
+    );
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const mode: string = body?.mode ?? "single";
@@ -80,7 +101,7 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (err) {
-    console.error("[parse-live-photo] error:", err);
+    logger.error("parse-live-photo", "error:", err);
     return NextResponse.json({ ok: false, error: "实况照片解析失败" }, { status: 500 });
   }
 }

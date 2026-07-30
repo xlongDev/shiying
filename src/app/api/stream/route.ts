@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,7 +138,7 @@ export async function GET(req: NextRequest) {
     if (err instanceof Error && err.name === "AbortError") {
       return NextResponse.json({ ok: false, error: "上游请求超时" }, { status: 504 });
     }
-    console.error("[stream] error:", err);
+    logger.error("stream", "error:", err);
     return NextResponse.json({ ok: false, error: "流代理失败" }, { status: 500 });
   } finally {
     clearTimeout(timer);

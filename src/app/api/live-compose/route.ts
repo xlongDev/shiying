@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { ffmpegSemaphore } from "@/lib/concurrency";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!videoRes.ok || !videoRes.body) {
-      console.error(`[live-compose] video download failed: HTTP ${videoRes.status}`);
+      logger.error("live-compose", `video download failed: HTTP ${videoRes.status}`);
       return NextResponse.json(
         { ok: false, error: `下载短片失败：HTTP ${videoRes.status}` },
         { status: 502 }
@@ -91,7 +92,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!audioRes.ok || !audioRes.body) {
-      console.error(`[live-compose] audio download failed: HTTP ${audioRes.status}`);
+      logger.error("live-compose", `audio download failed: HTTP ${audioRes.status}`);
 
       // 如果音频下载失败但视频成功，直接返回纯视频（无 BGM 合成）
       const videoBuffer = fs.readFileSync(videoTempPath);
@@ -152,7 +153,7 @@ export async function GET(req: NextRequest) {
 
     return new NextResponse(outputBuffer, { status: 200, headers: respHeaders });
   } catch (err) {
-    console.error("[live-compose] error:", err);
+    logger.error("live-compose", "error:", err);
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : "实况合成失败" },
       { status: 500 }
@@ -312,7 +313,7 @@ function mergeWithFfmpeg(
         resolve();
       } else {
         const stderr = errorChunks.join("").slice(-1000);
-        console.error(`[live-compose] ffmpeg exited with code ${code}: ${stderr}`);
+        logger.error("live-compose", `ffmpeg exited with code ${code}: ${stderr}`);
         reject(new Error(`ffmpeg 合成失败 (code ${code})`));
       }
     });

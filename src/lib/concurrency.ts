@@ -38,3 +38,12 @@ export function createSemaphore(max: number): Semaphore {
 
 /** 服务端 ffmpeg 子进程并发上限：同时最多 2 个。 */
 export const ffmpegSemaphore = createSemaphore(2);
+
+/**
+ * 无头浏览器（puppeteer）并发上限：同时最多 3 个。
+ *
+ * 实况照片探测需拉起系统 Chrome，单次耗时 15s+ 且内存占用高。若无并发限制，
+ * 多个请求会同时启动多个 Chrome 实例，在 serverless 受限内存下极易 OOM / 崩溃。
+ * 信号量确保同一实例内 Chrome 实例数可控；超出则排队等待，而非无节制拉起。
+ */
+export const puppeteerSemaphore = createSemaphore(3);

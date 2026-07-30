@@ -24,6 +24,7 @@
 
 import { toBlobURL, fetchFile } from "@ffmpeg/util";
 import type { FFmpeg as FFmpegType } from "@ffmpeg/ffmpeg";
+import { logger } from "./logger";
 
 export type ComposeStage =
   | "loading-ffmpeg"
@@ -505,7 +506,7 @@ export async function composeVideoFromImages(
         }
       }
     } catch (err) {
-      console.warn("[compose] 音乐降级获取失败，将合成无音乐版本:", err);
+      logger.warn("compose", "音乐降级获取失败，将合成无音乐版本:", err);
     }
   }
 
@@ -717,7 +718,7 @@ export async function composeVideoFromImages(
   const stallMonitor = setInterval(() => {
     if (Date.now() - lastProgressTime > 120000 && !stalled) {
       stalled = true;
-      console.warn("[compose] ffmpeg 进度停滞超过 120s，可能已死锁");
+      logger.warn("compose", "ffmpeg 进度停滞超过 120s，可能已死锁");
     }
   }, 10000);
 

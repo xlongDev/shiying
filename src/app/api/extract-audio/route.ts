@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { Readable } from "stream";
 import { ffmpegSemaphore } from "@/lib/concurrency";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,8 +78,9 @@ export async function GET(req: NextRequest) {
     });
 
     if (!videoRes.ok || !videoRes.body) {
-      console.error(
-        `[extract-audio] upstream failed: ${videoRes.status} for ${finalUrl.substring(0, 120)}`
+      logger.error(
+        "extract-audio",
+        `upstream failed: ${videoRes.status} for ${finalUrl.substring(0, 120)}`
       );
       return NextResponse.json(
         { ok: false, error: `获取视频流失败：HTTP ${videoRes.status}` },
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
 
     // 简单校验：返回的是 JSON 或 HTML 错误页（不是视频流）
     if (contentType.includes("json") || contentType.includes("html")) {
-      console.error(`[extract-audio] upstream returned non-video content-type: ${contentType}`);
+      logger.error("extract-audio", `upstream returned non-video content-type: ${contentType}`);
       return NextResponse.json(
         { ok: false, error: "上游返回的不是视频流，无法提取音频" },
         { status: 502 }
@@ -111,8 +113,9 @@ export async function GET(req: NextRequest) {
     const videoTooSmall = videoStats.size < 10240; // 10KB 阈值
 
     if (videoTooSmall) {
-      console.warn(
-        `[extract-audio] downloaded video too small (${videoStats.size} bytes), trying fallback`
+      logger.warn(
+        "extract-audio",
+        `downloaded video too small (${videoStats.size} bytes), trying fallback`
       );
 
       // 优先从 URL 中提取 video_id 构造 snssdk URL
@@ -148,13 +151,14 @@ export async function GET(req: NextRequest) {
             console.log(`[extract-audio] snssdk retry downloaded ${videoStats.size} bytes`);
           }
         } catch (retryErr) {
-          console.error("[extract-audio] snssdk retry failed:", retryErr);
+          logger.error("extract-audio", "snssdk retry failed:", retryErr);
           if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
         }
       } else if (awemeId) {
         // 有 awemeId 但获取不到 video_id → 直接用 iteminfo API 的 play_addr URL 下载
-        console.warn(
-          `[extract-audio] no video_id found, trying direct iteminfo play_addr with awemeId=${awemeId}`
+        logger.warn(
+          "extract-audio",
+          `no video_id found, trying direct iteminfo play_addr with awemeId=${awemeId}`
         );
         try {
           const directUrl = await getDirectVideoUrl(awemeId);
@@ -179,7 +183,7 @@ export async function GET(req: NextRequest) {
             }
           }
         } catch (directErr) {
-          console.error("[extract-audio] direct iteminfo retry failed:", directErr);
+          logger.error("extract-audio", "direct iteminfo retry failed:", directErr);
           if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
         }
       }
@@ -226,7 +230,7 @@ export async function GET(req: NextRequest) {
       headers: responseHeaders,
     });
   } catch (err) {
-    console.error("[extract-audio] error:", err);
+    logger.error("extract-audio", "error:", err);
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : "音频提取失败" },
       { status: 500 }
@@ -277,14 +281,14 @@ async function getVideoIdFromApi(awemeId: string): Promise<string | null> {
       },
     });
     if (!res.ok) {
-      console.error(`[extract-audio] iteminfo API failed: HTTP ${res.status}`);
+      logger.error("extract-audio", `iteminfo API failed: HTTP ${res.status}`);
       return null;
     }
 
     const json = (await res.json()) as Record<string, unknown>;
     const itemList = json.item_list as unknown[];
     if (!Array.isArray(itemList) || itemList.length === 0) {
-      console.error("[extract-audio] iteminfo: no item_list");
+      logger.error("extract-audio", "iteminfo: no item_list");
       return null;
     }
 
@@ -308,7 +312,7 @@ async function getVideoIdFromApi(awemeId: string): Promise<string | null> {
 
     return null;
   } catch (err) {
-    console.error("[extract-audio] getVideoIdFromApi error:", err);
+    logger.error("extract-audio", "getVideoIdFromApi error:", err);
     return null;
   }
 }
@@ -483,7 +487,7 @@ function extractAudioWithFfmpeg(
         resolve();
       } else {
         const stderr = errorChunks.join("").slice(-1000);
-        console.error(`[extract-audio] ffmpeg exited with code ${code}: ${stderr}`);
+        logger.error("extract-audio", `ffmpeg exited with code ${code}: ${stderr}`);
         reject(new Error(`ffmpeg 处理失败 (code ${code})`));
       }
     });
