@@ -19,7 +19,9 @@ afterEach(cleanup);
 
 describe("LivePhotoPanel 分支渲染", () => {
   it("livePhotoPending → 渲染探测中面板", () => {
-    render(<LivePhotoPanel video={{ ...base, livePhotoPending: true }} onOpenComposeModal={noop} />);
+    render(
+      <LivePhotoPanel video={{ ...base, livePhotoPending: true }} onOpenComposeModal={noop} />
+    );
     expect(screen.getByText("正在探测实况照片")).toBeInTheDocument();
   });
 

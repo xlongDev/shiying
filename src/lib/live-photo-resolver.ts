@@ -415,9 +415,7 @@ async function loadNotePage(
  * 与 loadNotePage 内的 acquire 配对；loadNotePage 自身失败路径也会释放，
  * 此处仅在成功拿到 page 后由调用方 finally 调用，避免信号量许可泄漏导致排队死锁。
  */
-async function closeNotePage(
-  page: import("puppeteer-core").Page | null
-): Promise<void> {
+async function closeNotePage(page: import("puppeteer-core").Page | null): Promise<void> {
   if (!page) return;
   try {
     await page.browser().close();

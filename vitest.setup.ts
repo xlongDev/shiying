@@ -26,8 +26,7 @@ if (typeof window !== "undefined") {
     unobserve() {}
     disconnect() {}
   }
-  window.ResizeObserver =
-    ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
+  window.ResizeObserver = ResizeObserverStub as unknown as typeof globalThis.ResizeObserver;
 
   // jsdom 未实现 HTMLMediaElement.play/pause —— 组件调用 play().catch() 会抛错
   const mediaProto = window.HTMLMediaElement.prototype;

@@ -330,11 +330,7 @@ export function GlassVideoControls({
                           strokeWidth={2}
                         >
                           <rect x="2" y="3" width="20" height="14" rx="2" />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M8 21h8M12 17v4"
-                          />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 21h8M12 17v4" />
                         </svg>
                         画中画
                       </button>

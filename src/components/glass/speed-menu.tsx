@@ -142,9 +142,7 @@ export function SpeedMenu({
                 key={rate}
                 onClick={() => onSelectRate(rate)}
                 className={`w-full px-2.5 py-1 text-left text-[11px] font-mono flex items-center gap-1.5 transition-colors ${
-                  currentRate === rate
-                    ? cfg.speedActiveClass
-                    : cfg.speedInactiveClass
+                  currentRate === rate ? cfg.speedActiveClass : cfg.speedInactiveClass
                 }`}
                 style={currentRate === rate ? cfg.speedActiveStyle : undefined}
               >

@@ -31,12 +31,7 @@ function emit(level: LogLevel, scope: string, args: unknown[]): void {
   if (LEVEL_ORDER[level] < getThreshold()) return;
   const ts = new Date().toISOString();
   const prefix = `${ts} [${level.toUpperCase()}] [${scope}]`;
-  const fn =
-    level === "error"
-      ? console.error
-      : level === "warn"
-        ? console.warn
-        : console.log;
+  const fn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
   fn(prefix, ...args);
 }
 

@@ -5,13 +5,7 @@
 
 import { ParseError } from "./types";
 import type { LivePhotoInfo, ParsedVideo } from "./types";
-import {
-  MOBILE_UA,
-  pickFirstUrl,
-  normalizeUrl,
-  formatNumber,
-  pickBestImageUrl,
-} from "./extract";
+import { MOBILE_UA, pickFirstUrl, normalizeUrl, formatNumber, pickBestImageUrl } from "./extract";
 import { resolveLivePhotosForSlides } from "../live-photo-resolver";
 import { logger } from "../logger";
 
