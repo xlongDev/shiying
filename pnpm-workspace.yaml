@@ -1,0 +1,6 @@
+# pnpm 11 build script approvals
+# In v11, onlyBuiltDependencies is replaced by allowBuilds
+# See: https://pnpm.io/settings#allowbuilds
+
+allowBuilds:
+  sharp: true
