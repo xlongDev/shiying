@@ -3,6 +3,11 @@
   "version": "0.2.0",
   "private": true,
   "packageManager": "pnpm@11.9.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
+  },
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
