@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatTime } from "@/lib/format-time";
+import { SpeedMenu } from "@/components/glass/speed-menu";
+import { useVideoPlayer } from "@/hooks/use-video-player";
 
 interface GlassVideoControlsProps {
   src: string;
@@ -12,8 +14,6 @@ interface GlassVideoControlsProps {
   className?: string;
 }
 
-const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
-
 /**
  * 液态玻璃风格视频播放器 — 替代原生 <video controls>
  *
@@ -21,6 +21,8 @@ const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
  * - 底部渐变遮罩 + 毛玻璃控制条
  * - 可拖拽进度条、静音切换、三点菜单（速度/全屏/PiP/下载）
  * - hover / 触控时显示，3s 无操作自动隐藏
+ *
+ * 播放状态机已抽离到 `useVideoPlayer`，本组件只负责渲染与把 DOM 行为接到事件上。
  */
 export function GlassVideoControls({
   src,
@@ -29,70 +31,39 @@ export function GlassVideoControls({
   loop = true,
   className = "",
 }: GlassVideoControlsProps) {
-  const videoRef = React.useRef<HTMLVideoElement>(null);
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const progressRef = React.useRef<HTMLDivElement>(null);
+  const player = useVideoPlayer({ defaultMuted });
+  const {
+    videoRef,
+    containerRef,
+    progressRef,
+    menuTriggerRef,
+    playing,
+    muted,
+    progress,
+    currentTime,
+    duration,
+    controlsVisible,
+    dragging,
+    speedMenuOpen,
+    playbackRate,
+    menuPos,
+    togglePlay,
+    toggleMute,
+    changeSpeed,
+    toggleSpeedMenu,
+    setSpeedMenuOpen,
+    resetHideTimer,
+    handlePointerEnter,
+    handlePointerLeave,
+    handlePlay,
+    handlePause,
+    handleTimeUpdate,
+    handleLoadedMetadata,
+    handleEnded,
+    handleProgressPointerDown,
+  } = player;
 
-  const [playing, setPlaying] = React.useState(false);
-  const [muted, setMuted] = React.useState(defaultMuted);
-  const [progress, setProgress] = React.useState(0);
-  const [currentTime, setCurrentTime] = React.useState(0);
-  const [duration, setDuration] = React.useState(0);
-  const [controlsVisible, setControlsVisible] = React.useState(true);
-  const [dragging, setDragging] = React.useState(false);
-  const [speedMenuOpen, setSpeedMenuOpen] = React.useState(false);
-  const [playbackRate, setPlaybackRate] = React.useState(1);
-  const [menuPos, setMenuPos] = React.useState({ top: 0, left: 0 });
-  const menuTriggerRef = React.useRef<HTMLButtonElement>(null);
-  const hideTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  /* ---- 控制栏自动隐藏 ---- */
-  const resetHideTimer = React.useCallback(() => {
-    setControlsVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => {
-      if (!dragging && !speedMenuOpen && playing) setControlsVisible(false);
-    }, 3000);
-  }, [dragging, speedMenuOpen, playing]);
-
-  const handlePointerEnter = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    setControlsVisible(true);
-  };
-
-  const handlePointerLeave = () => {
-    if (playing && !dragging && !speedMenuOpen) {
-      hideTimer.current = setTimeout(() => setControlsVisible(false), 1200);
-    }
-  };
-
-  /* ---- 播放控制 ---- */
-  const togglePlay = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) v.play().catch(() => {});
-    else v.pause();
-    resetHideTimer();
-  };
-
-  const toggleMute = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.muted = !v.muted;
-    setMuted(v.muted);
-    resetHideTimer();
-  };
-
-  const changeSpeed = (rate: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.playbackRate = rate;
-    setPlaybackRate(rate);
-    setSpeedMenuOpen(false);
-    resetHideTimer();
-  };
-
-  /* ---- 全屏 ---- */
+  /* ---- 全屏 / 画中画 / 下载（与具体菜单项绑定的 DOM 行为，留在组件侧） ---- */
   const toggleFullscreen = async () => {
     const el = containerRef.current;
     if (!el) return;
@@ -108,7 +79,6 @@ export function GlassVideoControls({
     resetHideTimer();
   };
 
-  /* ---- 画中画 ---- */
   const togglePiP = async () => {
     const v = videoRef.current;
     if (!v) return;
@@ -124,7 +94,6 @@ export function GlassVideoControls({
     resetHideTimer();
   };
 
-  /* ---- 下载 ---- */
   const downloadVideo = async () => {
     const v = videoRef.current;
     if (!v || !v.src) return;
@@ -142,79 +111,6 @@ export function GlassVideoControls({
     }
     resetHideTimer();
   };
-
-  /* ---- 进度 ---- */
-  const handleTimeUpdate = () => {
-    const v = videoRef.current;
-    if (!v || dragging) return;
-    const pct = v.duration > 0 ? (v.currentTime / v.duration) * 100 : 0;
-    setProgress(pct);
-    setCurrentTime(v.currentTime);
-    setDuration(v.duration);
-  };
-
-  const handleLoadedMetadata = () => {
-    const v = videoRef.current;
-    if (v) setDuration(v.duration);
-  };
-
-  const handleEnded = () => {
-    setPlaying(false);
-    setProgress(0);
-    setCurrentTime(0);
-  };
-
-  /* ---- 进度拖拽 ---- */
-  const seekTo = (clientX: number) => {
-    const bar = progressRef.current;
-    const v = videoRef.current;
-    if (!bar || !v || !v.duration) return;
-    const rect = bar.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    v.currentTime = frac * v.duration;
-    setProgress(frac * 100);
-    setCurrentTime(frac * v.duration);
-  };
-
-  const handleProgressPointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    setDragging(true);
-    setSpeedMenuOpen(false);
-    setControlsVisible(true);
-    seekTo(e.clientX);
-    const onMove = (ev: PointerEvent) => seekTo(ev.clientX);
-    const onUp = () => {
-      setDragging(false);
-      resetHideTimer();
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
-  /* ---- 格式化时间 ---- */
-  const fmt = (s: number) => {
-    if (!isFinite(s)) return "0:00";
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, "0")}`;
-  };
-
-  /* 关闭菜单（点击外部） */
-  React.useEffect(() => {
-    if (!speedMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-speed-menu]")) setSpeedMenuOpen(false);
-    };
-    // 延迟绑定避免立即触发
-    const id = setTimeout(() => document.addEventListener("click", handler), 10);
-    return () => {
-      clearTimeout(id);
-      document.removeEventListener("click", handler);
-    };
-  }, [speedMenuOpen]);
 
   return (
     <div
@@ -236,11 +132,8 @@ export function GlassVideoControls({
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
-        onPlay={() => {
-          setPlaying(true);
-          resetHideTimer();
-        }}
-        onPause={() => setPlaying(false)}
+        onPlay={handlePlay}
+        onPause={handlePause}
       />
 
       {/* 大面积点击播放 — 液态玻璃播放按钮 */}
@@ -301,7 +194,7 @@ export function GlassVideoControls({
               ref={progressRef}
               className="relative h-1 rounded-full cursor-pointer mb-2 group/progress"
               style={{ touchAction: "none" }}
-              onPointerDown={handleProgressPointerDown as unknown as React.MouseEventHandler}
+              onPointerDown={handleProgressPointerDown}
             >
               <div className="absolute inset-0 rounded-full bg-white/15" />
               <motion.div
@@ -337,7 +230,7 @@ export function GlassVideoControls({
 
               {/* 时间 */}
               <span className="text-[9px] text-white/60 font-mono tabular-nums select-none ml-0.5 mr-auto whitespace-nowrap">
-                {fmt(currentTime)} / {fmt(duration)}
+                {formatTime(currentTime)} / {formatTime(duration)}
               </span>
 
               {/* 静音 */}
@@ -383,21 +276,9 @@ export function GlassVideoControls({
               </button>
 
               {/* 三点菜单 */}
-              <div className="relative" data-speed-menu>
+              <div className="relative">
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const btn = menuTriggerRef.current;
-                    if (btn) {
-                      const rect = btn.getBoundingClientRect();
-                      setMenuPos({
-                        top: rect.top - 8,
-                        left: rect.left + rect.width / 2,
-                      });
-                    }
-                    setSpeedMenuOpen((o) => !o);
-                    resetHideTimer();
-                  }}
+                  onClick={toggleSpeedMenu}
                   ref={menuTriggerRef}
                   className="h-7 w-7 rounded-lg flex items-center justify-center text-white/80 hover:bg-white/12 transition-colors flex-shrink-0"
                   aria-label="更多选项"
@@ -409,139 +290,76 @@ export function GlassVideoControls({
                   </svg>
                 </button>
 
-                {/* 下拉菜单 — Portal 渲染 + 液态玻璃紧凑设计 */}
-                {speedMenuOpen &&
-                  createPortal(
-                    <AnimatePresence>
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.9, y: -6 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9, y: -6 }}
-                        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                        className="fixed min-w-[116px] py-0.5 rounded-2xl overflow-hidden z-[9999]"
-                        style={{
-                          top: `${menuPos.top}px`,
-                          left: `${menuPos.left}px`,
-                          transform: "translateX(-50%)",
-                          background: "rgba(20,20,28,0.80)",
-                          backdropFilter: "blur(24px) saturate(180%)",
-                          WebkitBackdropFilter: "blur(24px) saturate(180%)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          boxShadow:
-                            "0 8px 32px rgba(0,0,0,0.40), 0 2px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06)",
-                        }}
-                        onClick={(e) => e.stopPropagation()}
+                <SpeedMenu
+                  open={speedMenuOpen}
+                  menuPos={menuPos}
+                  currentRate={playbackRate}
+                  onSelectRate={changeSpeed}
+                  onClose={() => setSpeedMenuOpen(false)}
+                  tone="video"
+                  extraItems={
+                    <>
+                      <button
+                        onClick={toggleFullscreen}
+                        className="w-full px-2.5 py-1 text-left text-[11px] text-white/60 hover:text-white/90 transition-colors flex items-center gap-1.5"
                       >
-                        {/* 播放速度 */}
-                        <div className="px-2 pt-1 pb-0.5">
-                          <span className="text-[8px] uppercase tracking-widest text-white/30 font-medium">
-                            速度
-                          </span>
-                        </div>
-                        {SPEED_OPTIONS.map((rate) => (
-                          <button
-                            key={rate}
-                            onClick={() => changeSpeed(rate)}
-                            className={`w-full px-2.5 py-1 text-left text-[11px] font-mono flex items-center gap-1.5 transition-colors ${
-                              playbackRate === rate
-                                ? "text-purple-300"
-                                : "text-white/60 hover:text-white/90"
-                            }`}
-                            style={
-                              playbackRate === rate
-                                ? { background: "rgba(168,85,247,0.12)" }
-                                : undefined
-                            }
-                          >
-                            {rate}x
-                            {playbackRate === rate && (
-                              <svg
-                                className="h-2.5 w-2.5 ml-auto text-purple-400"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                                strokeWidth={2.5}
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M5 13l4 4L19 7"
-                                />
-                              </svg>
-                            )}
-                          </button>
-                        ))}
-
-                        {/* 分隔线 */}
-                        <div className="mx-2 my-0.5 h-px bg-white/6" />
-
-                        {/* 全屏 */}
-                        <button
-                          onClick={toggleFullscreen}
-                          className="w-full px-2.5 py-1 text-left text-[11px] text-white/60 hover:text-white/90 transition-colors flex items-center gap-1.5"
+                        <svg
+                          className="h-3 w-3 text-white/40"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
                         >
-                          <svg
-                            className="h-3 w-3 text-white/40"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"
-                            />
-                          </svg>
-                          全屏预览
-                        </button>
-
-                        {/* 画中画 */}
-                        <button
-                          onClick={togglePiP}
-                          className="w-full px-2.5 py-1 text-left text-[11px] text-white/60 hover:text-white/90 transition-colors flex items-center gap-1.5"
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"
+                          />
+                        </svg>
+                        全屏预览
+                      </button>
+                      <button
+                        onClick={togglePiP}
+                        className="w-full px-2.5 py-1 text-left text-[11px] text-white/60 hover:text-white/90 transition-colors flex items-center gap-1.5"
+                      >
+                        <svg
+                          className="h-3 w-3 text-white/40"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
                         >
-                          <svg
-                            className="h-3 w-3 text-white/40"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                          >
-                            <rect x="2" y="3" width="20" height="14" rx="2" />
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M8 21h8M12 17v4"
-                            />
-                          </svg>
-                          画中画
-                        </button>
-
-                        {/* 下载 */}
-                        <button
-                          onClick={downloadVideo}
-                          className="w-full px-2.5 py-1 text-left text-[11px] text-emerald-300/80 hover:text-emerald-300 transition-colors flex items-center gap-1.5"
+                          <rect x="2" y="3" width="20" height="14" rx="2" />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8 21h8M12 17v4"
+                          />
+                        </svg>
+                        画中画
+                      </button>
+                      <button
+                        onClick={downloadVideo}
+                        className="w-full px-2.5 py-1 text-left text-[11px] text-emerald-300/80 hover:text-emerald-300 transition-colors flex items-center gap-1.5"
+                      >
+                        <svg
+                          className="h-3 w-3 text-emerald-400/60"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
                         >
-                          <svg
-                            className="h-3 w-3 text-emerald-400/60"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0 0l-4-4m4 4l4-4"
-                            />
-                          </svg>
-                          下载视频
-                        </button>
-                      </motion.div>
-                    </AnimatePresence>,
-                    document.body
-                  )}
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0 0l-4-4m4 4l4-4"
+                          />
+                        </svg>
+                        下载视频
+                      </button>
+                    </>
+                  }
+                />
               </div>
             </div>
           </motion.div>

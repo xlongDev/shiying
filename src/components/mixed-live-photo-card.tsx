@@ -133,6 +133,7 @@ export function MixedLivePhotoCard({
             <div className="flex items-center gap-1 ml-auto">
               <button
                 onClick={onPrev}
+                aria-label="上一张实况"
                 className="h-6 w-6 rounded-full glass flex items-center justify-center hover:bg-primary/10 transition-colors disabled:opacity-30"
                 disabled={totalLive <= 1}
               >
@@ -143,6 +144,7 @@ export function MixedLivePhotoCard({
               </span>
               <button
                 onClick={onNext}
+                aria-label="下一张实况"
                 className="h-6 w-6 rounded-full glass flex items-center justify-center hover:bg-primary/10 transition-colors disabled:opacity-30"
                 disabled={totalLive <= 1}
               >
@@ -162,6 +164,7 @@ export function MixedLivePhotoCard({
               src={buildMediaProxyUrl(currentLp.imageUrl, `live_cover_${selectedLiveIndex}.jpg`)}
               alt={`实况静态原图 ${selectedLiveIndex + 1}`}
               className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+              decoding="async"
             />
             <div className="absolute top-1.5 right-1.5 glass rounded-full px-2 py-0.5 text-[10px]">
               静态原图
@@ -217,6 +220,7 @@ export function MixedLivePhotoCard({
                   alt={`实况 ${i + 1}`}
                   className="h-full w-full object-cover"
                   loading="lazy"
+                  decoding="async"
                 />
                 {i === selectedLiveIndex && <div className="absolute inset-0 bg-purple-400/20" />}
               </button>

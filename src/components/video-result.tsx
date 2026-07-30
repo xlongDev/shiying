@@ -147,6 +147,7 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
                   src={buildMediaProxyUrl(video.cover, "cover.jpg")}
                   alt={video.desc}
                   className="h-full w-full object-cover"
+                  decoding="async"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                   }}
@@ -200,6 +201,8 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
                   src={buildMediaProxyUrl(video.author.avatar, "avatar.jpg")}
                   alt={video.author.name}
                   className="h-10 w-10 rounded-full object-cover flex-shrink-0"
+                  loading="lazy"
+                  decoding="async"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                   }}

@@ -91,6 +91,7 @@ export function SingleLivePhotoCard({
               src={buildMediaProxyUrl(lp.imageUrl, "live_cover.jpg")}
               alt="实况静态原图"
               className="absolute inset-0 w-full h-full object-cover"
+              decoding="async"
             />
             <div className="absolute top-1.5 right-1.5 glass rounded-full px-2 py-0.5 text-[10px]">
               静态原图

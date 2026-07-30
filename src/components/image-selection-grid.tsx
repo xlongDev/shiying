@@ -63,6 +63,7 @@ export function ImageSelectionGrid({
               alt=""
               className="h-full w-full object-cover"
               loading="lazy"
+              decoding="async"
             />
             <div
               className={`absolute inset-0 transition-all ${isSelected(i) ? "bg-primary/30" : "bg-black/0 hover:bg-black/20"}`}

@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SoundManager } from "@/components/sound-manager";
@@ -66,7 +65,6 @@ export default function RootLayout({
         >
           <SoundManager>
             {children}
-            <Toaster />
             <SonnerToaster position="top-center" theme="system" richColors closeButton />
           </SoundManager>
         </ThemeProvider>

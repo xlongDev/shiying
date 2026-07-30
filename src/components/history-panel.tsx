@@ -105,6 +105,8 @@ export function HistoryPanel({ onSelect }: HistoryPanelProps) {
                           src={item.video.cover}
                           alt=""
                           className="h-12 w-12 rounded-lg object-cover flex-shrink-0"
+                          loading="lazy"
+                          decoding="async"
                         />
                       )}
                       <div className="flex-1 min-w-0">

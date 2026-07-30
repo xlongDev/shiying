@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { createPortal } from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { Play, Pause, Volume2, Volume1, VolumeX, MoreVertical, Music } from "lucide-react";
+import { formatTime } from "@/lib/format-time";
+import { SpeedMenu } from "@/components/glass/speed-menu";
 
 interface GlassAudioControlsProps {
   src: string;
@@ -13,7 +13,6 @@ interface GlassAudioControlsProps {
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
-const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export function GlassAudioControls({
   src,
@@ -80,19 +79,6 @@ export function GlassAudioControls({
 
   // 组件卸载时清理 rAF，避免内存泄漏
   React.useEffect(() => () => stopProgressRAF(), [stopProgressRAF]);
-
-  React.useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest("[data-audio-menu]")) setMenuOpen(false);
-    };
-    const id = setTimeout(() => document.addEventListener("click", handler), 10);
-    return () => {
-      clearTimeout(id);
-      document.removeEventListener("click", handler);
-    };
-  }, [menuOpen]);
 
   const togglePlay = () => {
     const a = audioRef.current;
@@ -210,13 +196,6 @@ export function GlassAudioControls({
     } catch {}
   };
 
-  const fmt = (s: number) => {
-    if (!isFinite(s) || s < 0) return "0:00";
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, "0")}`;
-  };
-
   const downloadAudio = () => {
     const a = audioRef.current;
     if (!a || !a.src) return;
@@ -326,7 +305,7 @@ export function GlassAudioControls({
 
       {/* 时间 */}
       <span className="text-[10px] sm:text-[11px] font-medium tabular-nums select-none whitespace-nowrap min-w-0 text-center text-slate-600 dark:text-slate-300">
-        {fmt(currentTime)} / {fmt(duration)}
+        {formatTime(currentTime)} / {formatTime(duration)}
       </span>
 
       {/* 进度条 */}
@@ -397,7 +376,7 @@ export function GlassAudioControls({
       </div>
 
       {/* 更多选项 */}
-      <div className="relative flex-shrink-0" data-audio-menu>
+      <div className="relative flex-shrink-0">
         <button
           ref={menuTriggerRef}
           onClick={(e) => {
@@ -415,76 +394,31 @@ export function GlassAudioControls({
           <MoreVertical className="h-3.5 w-3.5" />
         </button>
 
-        {menuOpen &&
-          createPortal(
-            <AnimatePresence>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: -6 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: -6 }}
-                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                className="fixed min-w-[120px] py-1 rounded-2xl overflow-hidden z-[9999] bg-white/92 dark:bg-slate-900/95 border border-white/55 dark:border-slate-700/50"
-                style={{
-                  top: `${menuPos.top}px`,
-                  left: `${menuPos.left}px`,
-                  transform: "translateX(-50%)",
-                  backdropFilter: "blur(24px) saturate(180%)",
-                  WebkitBackdropFilter: "blur(24px) saturate(180%)",
-                  boxShadow:
-                    "0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.45)",
-                }}
-                onClick={(e) => e.stopPropagation()}
+        <SpeedMenu
+          open={menuOpen}
+          menuPos={menuPos}
+          currentRate={playbackRate}
+          onSelectRate={changeSpeed}
+          onClose={() => setMenuOpen(false)}
+          tone="audio"
+          extraItems={
+            <>
+              <button
+                onClick={toggleLoop}
+                className="w-full px-2.5 py-1 text-left text-[11px] text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1.5"
               >
-                <div className="px-2 pt-1 pb-0.5">
-                  <span className="text-[8px] uppercase tracking-widest text-slate-400 font-medium">
-                    速度
-                  </span>
-                </div>
-                {SPEED_OPTIONS.map((rate) => (
-                  <button
-                    key={rate}
-                    onClick={() => changeSpeed(rate)}
-                    className={`w-full px-2.5 py-1 text-left text-[11px] font-mono flex items-center gap-1.5 transition-colors ${
-                      playbackRate === rate
-                        ? "text-purple-600"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                    style={
-                      playbackRate === rate ? { background: "rgba(168,85,247,0.10)" } : undefined
-                    }
-                  >
-                    {rate}x
-                    {playbackRate === rate && (
-                      <svg
-                        className="h-2.5 w-2.5 ml-auto text-purple-500"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2.5}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                ))}
-                <div className="mx-2 my-0.5 h-px bg-slate-200" />
-                <button
-                  onClick={toggleLoop}
-                  className="w-full px-2.5 py-1 text-left text-[11px] text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1.5"
-                >
-                  <span className={loop ? "text-purple-600" : ""}>循环播放</span>
-                  {loop && <span className="ml-auto text-[10px] text-purple-600">ON</span>}
-                </button>
-                <button
-                  onClick={downloadAudio}
-                  className="w-full px-2.5 py-1 text-left text-[11px] text-emerald-600 hover:text-emerald-700 transition-colors flex items-center gap-1.5"
-                >
-                  下载音乐
-                </button>
-              </motion.div>
-            </AnimatePresence>,
-            document.body
-          )}
+                <span className={loop ? "text-purple-600" : ""}>循环播放</span>
+                {loop && <span className="ml-auto text-[10px] text-purple-600">ON</span>}
+              </button>
+              <button
+                onClick={downloadAudio}
+                className="w-full px-2.5 py-1 text-left text-[11px] text-emerald-600 hover:text-emerald-700 transition-colors flex items-center gap-1.5"
+              >
+                下载音乐
+              </button>
+            </>
+          }
+        />
       </div>
     </div>
   );

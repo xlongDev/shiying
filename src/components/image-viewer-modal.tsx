@@ -112,6 +112,8 @@ export function ImageViewerModal({ images, initialIndex, onClose }: ImageViewerM
           src={buildMediaProxyUrl(images[index], `preview_${index}.jpg`)}
           alt=""
           className="max-w-full max-h-[80vh] object-contain rounded-[2rem]"
+          loading="lazy"
+          decoding="async"
         />
       </motion.div>
 
