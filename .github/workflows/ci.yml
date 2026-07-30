@@ -30,7 +30,7 @@ jobs:
         run: pnpm lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: NODE_OPTIONS=--max-old-space-size=4096 pnpm typecheck
 
       - name: Unit tests
         run: pnpm test
@@ -39,7 +39,9 @@ jobs:
         run: pnpm format:check
 
       - name: Build
-        run: pnpm build
+        run: NODE_OPTIONS=--max-old-space-size=4096 pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
 
   e2e:
     name: E2E smoke

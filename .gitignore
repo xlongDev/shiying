@@ -20,9 +20,17 @@ next-env.d.ts
 .env*
 !.env.example
 
-# temporary scratch files
+# temporary scratch / debug files
 _tmp_*
 --port:*
+*.cjs                # root-level CJS scratch scripts (not node_modules)
+ARCHITECTURE-REVIEW.md
+UPGRADE-REPORT.md
+
+# local dev / deploy scripts (not part of app source)
+kill-dev-servers.sh
+Caddyfile
+scripts/
 
 # local tooling data (not application source)
 .workbuddy/
