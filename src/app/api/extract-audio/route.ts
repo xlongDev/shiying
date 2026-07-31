@@ -37,7 +37,6 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get("url");
   const filename = searchParams.get("filename") || "audio.mp3";
-  const awemeId = searchParams.get("awemeId") || "";
   let videoTempPath = "";
   let audioTempPath = "";
 
@@ -128,18 +127,13 @@ export async function GET(req: NextRequest) {
     if (videoTooSmall) {
       logger.warn(
         "extract-audio",
-        `downloaded video too small (${videoStats.size} bytes), trying fallback`
+        `downloaded video too small (${videoStats.size} bytes), trying snssdk retry`
       );
 
-      // 优先从 URL 中提取 video_id 构造 snssdk URL
-      let videoId = extractVideoId(targetUrl);
-
-      // 如果从 URL 提取不到 video_id（CDN URL 通常不含此参数），
-      // 且有 awemeId，则通过 iesdouyin iteminfo API 获取最新视频 URL
-      if (!videoId && awemeId) {
-        videoId = await getVideoIdFromApi(awemeId);
-      }
-
+      // 优先从 URL 中提取 video_id 构造 snssdk URL 重试。
+      // 注：iesdouyin iteminfo 签名 API 现返回 11110(encrypt_data_miss) 已废弃，不再作为兜底；
+      // 若 CDN URL 不含 video_id 则无法自动恢复，下方最终检查将返回 502（视频流为空）。
+      const videoId = extractVideoId(targetUrl);
       if (videoId) {
         try {
           // 删除已被覆盖的旧临时文件，再重新分配路径
@@ -165,38 +159,6 @@ export async function GET(req: NextRequest) {
           }
         } catch (retryErr) {
           logger.error("extract-audio", "snssdk retry failed:", retryErr);
-          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
-        }
-      } else if (awemeId) {
-        // 有 awemeId 但获取不到 video_id → 直接用 iteminfo API 的 play_addr URL 下载
-        logger.warn(
-          "extract-audio",
-          `no video_id found, trying direct iteminfo play_addr with awemeId=${awemeId}`
-        );
-        try {
-          const directUrl = await getDirectVideoUrl(awemeId);
-          if (directUrl) {
-            if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
-            videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}-v3.mp4`);
-            const directRes = await fetch(directUrl, {
-              headers: getHeaders(directUrl),
-              redirect: "follow",
-            });
-            if (directRes.ok && directRes.body) {
-              await streamToFile(
-                directRes.body as unknown as import("stream/web").ReadableStream,
-                videoTempPath
-              );
-              videoStats = fs.statSync(videoTempPath);
-              console.log(
-                `[extract-audio] direct iteminfo retry downloaded ${videoStats.size} bytes`
-              );
-            } else if (fs.existsSync(videoTempPath)) {
-              fs.unlinkSync(videoTempPath);
-            }
-          }
-        } catch (directErr) {
-          logger.error("extract-audio", "direct iteminfo retry failed:", directErr);
           if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
         }
       }
@@ -276,97 +238,11 @@ function extractVideoId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-const MOBILE_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
-
 /**
- * 通过 iesdouyin iteminfo API 获取视频的 video_id
- * 用于 CDN URL 已过期时从抖音官方 API 获取最新播放地址
+ * 注：原 iesdouyin iteminfo 签名 API 兜底（getVideoIdFromApi / getDirectVideoUrl）
+ * 现返回 status_code:11110(encrypt_data_miss) 已废弃，已移除。视频流过小且 CDN URL
+ * 不含 video_id 时无法自动恢复，交由下方最终检查返回 502，不再静默重试失效 API。
  */
-async function getVideoIdFromApi(awemeId: string): Promise<string | null> {
-  try {
-    const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`;
-    console.log(`[extract-audio] fetching iteminfo for awemeId=${awemeId}`);
-    const res = await fetch(apiUrl, {
-      headers: {
-        "user-agent": MOBILE_UA,
-        referer: "https://www.iesdouyin.com/",
-      },
-    });
-    if (!res.ok) {
-      logger.error("extract-audio", `iteminfo API failed: HTTP ${res.status}`);
-      return null;
-    }
-
-    const json = (await res.json()) as Record<string, unknown>;
-    const itemList = json.item_list as unknown[];
-    if (!Array.isArray(itemList) || itemList.length === 0) {
-      logger.error("extract-audio", "iteminfo: no item_list");
-      return null;
-    }
-
-    const item = itemList[0] as Record<string, unknown>;
-    const video = (item.video ?? {}) as Record<string, unknown>;
-    const playAddr = (video.play_addr ?? {}) as Record<string, unknown>;
-    const urlList = playAddr.url_list as unknown[];
-
-    if (Array.isArray(urlList) && urlList.length > 0 && typeof urlList[0] === "string") {
-      const playUrl = urlList[0];
-      console.log(`[extract-audio] iteminfo play_addr: ${playUrl.substring(0, 120)}`);
-      // 从 play_addr URL 中提取 video_id
-      const vid = extractVideoId(playUrl);
-      if (vid) return vid;
-    }
-
-    // 也尝试从 uri 字段提取
-    if (typeof playAddr.uri === "string" && playAddr.uri) {
-      return playAddr.uri;
-    }
-
-    return null;
-  } catch (err) {
-    logger.error("extract-audio", "getVideoIdFromApi error:", err);
-    return null;
-  }
-}
-
-/**
- * 通过 iesdouyin iteminfo API 获取视频的直接 CDN 播放地址
- * 当 snssdk URL 也不可用时，直接用官方 CDN URL 下载
- */
-async function getDirectVideoUrl(awemeId: string): Promise<string | null> {
-  try {
-    const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`;
-    const res = await fetch(apiUrl, {
-      headers: {
-        "user-agent": MOBILE_UA,
-        referer: "https://www.iesdouyin.com/",
-      },
-    });
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as Record<string, unknown>;
-    const itemList = json.item_list as unknown[];
-    if (!Array.isArray(itemList) || itemList.length === 0) return null;
-
-    const item = itemList[0] as Record<string, unknown>;
-    const video = (item.video ?? {}) as Record<string, unknown>;
-    const playAddr = (video.play_addr ?? {}) as Record<string, unknown>;
-    const urlList = playAddr.url_list as unknown[];
-
-    if (Array.isArray(urlList) && urlList.length > 0 && typeof urlList[0] === "string") {
-      // 尝试去除水印（playwm → play）
-      const rawUrl = urlList[0];
-      const cleanUrl = rawUrl.replace("/playwm/", "/play/").replace("playwm", "play");
-      console.log(`[extract-audio] direct video URL: ${cleanUrl.substring(0, 120)}`);
-      return cleanUrl;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function getHeaders(url: string): Record<string, string> {
   const isDouyin =

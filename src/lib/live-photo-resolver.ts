@@ -13,14 +13,18 @@ const DESKTOP_UA =
 /**
  * 实况照片识别与资源提取。
  *
- * 主路径（纯 API，推荐）：调用 iesdouyin iteminfo 接口直接拿完整 aweme，
- * 从 images 数组中按 live_photo / clipType===5 / livePhotoType===1 判定实况，
- * 并从 video.bitRateList[0].playAddr 提取 douyinvod 动态短片 URL。
- * 无需无头浏览器，因此可在 Vercel 等无系统 Chrome 的 serverless 环境部署，
- * 也不受海外 IP 的浏览器指纹 / 反爬页面限制（直连数据 API）。
+ * 主路径（SSR 扫描，推荐）：借鉴开源项目 QingZai 的思路——
+ * 用移动端 UA 抓取 iesdouyin 分享页 HTML，从服务端渲染的 `window._ROUTER_DATA`
+ * 中直接读取完整 aweme，按 image_info.live_photo / clipType===5 / livePhotoType===1
+ * 判定实况，并从 video.bitRateList[0].playAddr 提取 douyinvod 动态短片 URL。
+ * 无需签名（抖音 SSR 直接把数据嵌进页面），也无需无头浏览器，
+ * 因此可在 Vercel 等无系统 Chrome 的 serverless 环境部署；对单图实况可在 Vercel 直接生效。
  *
- * 回退路径（无头浏览器）：当 API 未命中（接口变更 / 区域不可见等）时，
+ * 回退路径（无头浏览器）：SSR 未命中（如多图 slides 实况，SSR 不含动态短片 URL）时，
  * 由本地系统 Chrome 遍历 React fiber 兜底。Vercel 无 Chrome，回退自动跳过。
+ *
+ * 注：早期曾用 iesdouyin iteminfo 签名 API，但现已被抖音强制 a_bogus 签名校验
+ * （返回 status_code:11110 encrypt_data_miss），已弃用。
  */
 
 export interface ResolvedLivePhoto {
@@ -306,10 +310,35 @@ async function loadNotePage(
     // 速度优化：启用缓存，减少资源重复加载
     await page.setCacheEnabled(true);
 
-    await page.goto(`https://www.douyin.com${path ?? `/note/${awemeId}`}`, {
-      waitUntil: "domcontentloaded",
-      timeout: 15000,
-    });
+    // 导航可能在数据中心 IP / 反爬挑战页 / SPA 客户端重定向下抛 net::ERR_ABORTED 或超时，
+    // 这不代表页面无内容，但本兜底路径依赖 douyin.com 桌面端 React 注水后的 fiber 数据，
+    // 导航一旦失败即拿不到实况，无需继续等待 hydration。单独捕获并降级为 warn（避免把
+    // 预期内的兜底失败当成 error 污染日志），直接释放浏览器与并发许可、返回 null，
+    // 交由调用方按"无实况"处理（SSR 主路径已先行尝试）。
+    let gotoOk = true;
+    try {
+      await page.goto(`https://www.douyin.com${path ?? `/note/${awemeId}`}`, {
+        waitUntil: "domcontentloaded",
+        timeout: 12000,
+      });
+    } catch (gotoErr) {
+      gotoOk = false;
+      logger.warn(
+        "live-photo",
+        "页面导航未完成，放弃浏览器兜底:",
+        (gotoErr as Error)?.message ?? gotoErr
+      );
+    }
+
+    if (!gotoOk) {
+      try {
+        if (browser) await browser.close();
+      } catch {
+        /* ignore */
+      }
+      puppeteerSemaphore.release();
+      return null;
+    }
 
     console.log(`[live-page] 页面 DOM 加载完成 (${Date.now() - startTime}ms)`);
 
@@ -470,50 +499,202 @@ function extractVideoUrlFromApi(video: unknown): string {
   return "";
 }
 
+/* ------------------------------------------------------------------ */
+/* 主路径：SSR 扫描（移动端 UA + 解析 window._ROUTER_DATA）            */
+/* 借鉴 QingZai：抖音服务端把完整 aweme 嵌进分享页 HTML，无需签名。    */
+/* ------------------------------------------------------------------ */
+
 /**
- * 调用 iesdouyin iteminfo 接口直接拿完整 aweme，从 images 数组提取实况照片。
- * 返回与无头浏览器路径同构的 ResolvedLivePhoto[]（index 即 images 中的位置）。
- *
- * 安全：item_ids 为纯数字 ID（来自已校验的 awemeId），URL 固定拼接，无 SSRF 面。
+ * 从 HTML 中提取 window._ROUTER_DATA 的 JSON 字符串（括号深度匹配，
+ * 比 note.ts 的惰性正则更稳健，可正确处理超大嵌套 JSON）。取不到返回 null。
  */
-async function resolveLivePhotosViaApi(awemeId: string): Promise<ResolvedLivePhoto[]> {
+export function extractRouterData(html: string): string | null {
+  const marker = "window._ROUTER_DATA";
+  const startIdx = html.indexOf(marker);
+  if (startIdx < 0) return null;
+  const eqIdx = html.indexOf("=", startIdx);
+  if (eqIdx < 0) return null;
+  const braceStart = html.indexOf("{", eqIdx);
+  if (braceStart < 0) return null;
+  let depth = 0;
+  for (let i = braceStart; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return html.substring(braceStart, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * 在已解析的 _ROUTER_DATA JSON 字符串中定位 aweme item，
+ * 导航逻辑与 note.ts 主解析器一致（loaderData[pageKey].videoInfoRes.item_list[0]）。
+ */
+function findItemInRouterData(rd: string): Record<string, unknown> | null {
+  let json: Record<string, unknown>;
   try {
-    const apiRes = await fetch(
-      `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`,
-      {
+    json = JSON.parse(rd);
+  } catch {
+    return null;
+  }
+  const loaderData = (json.loaderData ?? {}) as Record<string, unknown>;
+  const loaderKeys = Object.keys(loaderData);
+  const pageKey =
+    loaderKeys.find((k) => k.includes("video_(id)")) ||
+    loaderKeys.find((k) => k.includes("note_(id)")) ||
+    loaderKeys.find((k) => k.includes("video")) ||
+    loaderKeys.find((k) => k.includes("note"));
+  const pageData = (pageKey ? loaderData[pageKey] : {}) as Record<string, unknown>;
+  const videoInfoRes = (pageData?.videoInfoRes ?? pageData?.videoInfo ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const itemList = (videoInfoRes.item_list ?? []) as unknown[];
+  if (!Array.isArray(itemList) || itemList.length === 0) return null;
+  return itemList[0] as Record<string, unknown>;
+}
+
+/** 从实况 video 对象中提取 douyinvod 短片 URL，兼容 url_list / play_addr / bitRateList 多形态 */
+function extractLivePhotoVideoUrl(v: unknown): string {
+  if (!v || typeof v !== "object") return "";
+  const o = v as Record<string, unknown>;
+  const urlList = o.url_list ?? o.urlList;
+  if (Array.isArray(urlList)) {
+    for (const u of urlList) {
+      if (typeof u === "string" && u.includes("douyinvod")) return u;
+      if (u && typeof u === "object" && typeof (u as Record<string, unknown>).url === "string") {
+        const s = (u as Record<string, unknown>).url as string;
+        if (s.includes("douyinvod")) return s;
+      }
+    }
+  }
+  const playAddr = o.play_addr ?? o.playAddr;
+  if (playAddr && typeof playAddr === "object") {
+    const u = pickFirstUrl((playAddr as Record<string, unknown>).url_list);
+    if (u && u.includes("douyinvod")) return u;
+  }
+  return extractVideoUrlFromApi(o);
+}
+
+/**
+ * 纯函数：从 _ROUTER_DATA JSON 字符串扫描实况照片，返回 ResolvedLivePhoto[]。
+ * 三条路径（与 QingZai 思路一致）：
+ *   1) 顶层 image_info.live_photo（单图实况常见形态）
+ *   2) images[] 数组中带 clipType===5 / livePhotoType===1 / live_photo 标记的图片
+ *   3) 全局兜底：单图帖时扫描整段 JSON 中的 douyinvod URL（仿 QingZai findDouyinvodUrl）
+ */
+export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
+  const item = findItemInRouterData(rd);
+  if (!item) return [];
+
+  const out: ResolvedLivePhoto[] = [];
+
+  // 路径 1：顶层 image_info.live_photo
+  const imageInfo = (item.image_info ?? {}) as Record<string, unknown>;
+  const topLive = imageInfo.live_photo;
+  if (topLive === true || (typeof topLive === "object" && topLive !== null)) {
+    const lp = topLive === true ? {} : (topLive as Record<string, unknown>);
+    const imgObj = (lp.image ?? (item.images as unknown[])?.[0]) as
+      Record<string, unknown> | undefined;
+    const imageUrl = imgObj ? pickBestImageUrl(imgObj) : "";
+    const videoUrl = extractLivePhotoVideoUrl(lp.video);
+    if (imageUrl && videoUrl) out.push({ index: 0, imageUrl, videoUrl });
+  }
+
+  // 路径 2：images[] 中的实况图片
+  const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
+  images.forEach((img, i) => {
+    if (!img || typeof img !== "object") return;
+    const im = img as Record<string, unknown>;
+    if (!isLiveImageApi(im)) return;
+    const imageUrl = pickBestImageUrl(im);
+    const videoUrl = extractVideoUrlFromApi(im.video);
+    if (imageUrl && videoUrl) out.push({ index: i, imageUrl, videoUrl });
+  });
+
+  if (out.length > 0) return out;
+
+  // 路径 3：单图兜底，全局扫描 douyinvod（仿 QingZai findDouyinvodUrl）
+  if (images.length === 1) {
+    const m = rd.match(/https?:\/\/[^"\\\s)]*douyinvod[^"\\\s)]*/);
+    if (m) {
+      const imageUrl = pickBestImageUrl(images[0] as Record<string, unknown>);
+      if (imageUrl) out.push({ index: 0, imageUrl, videoUrl: m[0] });
+    }
+  }
+  return out;
+}
+
+/**
+ * 主路径：移动端 UA 抓取 iesdouyin 分享页 SSR HTML，解析 window._ROUTER_DATA
+ * 提取实况照片。无需签名、无需浏览器；可在 Vercel 直接运行。
+ * 失败（接口变更 / 区域不可见等）返回 []，由调用方回退无头浏览器。
+ *
+ * 安全：awemeId 为纯数字（来自已校验的解析），URL 固定拼接，无 SSRF 面。
+ */
+async function resolveLivePhotosViaSsr(awemeId: string): Promise<ResolvedLivePhoto[]> {
+  const candidates = [
+    `https://www.iesdouyin.com/share/note/${awemeId}/`,
+    `https://www.iesdouyin.com/share/video/${awemeId}/`,
+  ];
+  for (const shareUrl of candidates) {
+    try {
+      const res = await fetch(shareUrl, {
         headers: {
           "user-agent": MOBILE_UA,
-          referer: "https://www.iesdouyin.com/",
+          referer: "https://www.douyin.com/",
+          accept: "text/html",
         },
-      }
-    );
-    if (!apiRes.ok) {
-      logger.warn("live-photo-api", `iteminfo API 返回 ${apiRes.status}`);
-      return [];
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const rd = extractRouterData(html);
+      if (!rd) continue;
+      const lives = scanLivePhotosInRouterData(rd);
+      if (lives.length > 0) return lives;
+    } catch (err) {
+      logger.warn("live-photo-ssr", `SSR 扫描失败 ${shareUrl}:`, err);
     }
-    const json = (await apiRes.json()) as Record<string, unknown>;
-    const itemList = json.item_list as unknown[];
-    if (!Array.isArray(itemList) || itemList.length === 0) {
-      logger.warn("live-photo-api", "iteminfo API 未返回 item_list");
-      return [];
-    }
-    const item = itemList[0] as Record<string, unknown>;
-    const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
-    const out: ResolvedLivePhoto[] = [];
-    images.forEach((img, i) => {
-      const im = img as Record<string, unknown>;
-      if (!isLiveImageApi(im)) return;
-      const imageUrl = pickBestImageUrl(im);
-      const videoUrl = extractVideoUrlFromApi(im.video);
-      if (imageUrl && videoUrl) {
-        out.push({ index: i, imageUrl, videoUrl });
-      }
-    });
-    return out;
-  } catch (err) {
-    logger.warn("live-photo-api", "iteminfo API 调用失败:", err);
-    return [];
   }
+  return [];
+}
+
+/**
+ * 移动端 UA 抓取 iesdouyin 分享页 SSR，返回完整 aweme item（含 music / 视频等字段）。
+ * 复用 extractRouterData + findItemInRouterData（与实况解析、note 主解析同源），
+ * 无需签名、可在 Vercel 运行。供 download-music 等需要 item 内音乐地址的路由复用。
+ *
+ * 安全：awemeId 为纯数字（来自已校验解析），URL 固定拼接，无 SSRF 面。
+ */
+export async function fetchAwemeItemViaSsr(
+  awemeId: string
+): Promise<Record<string, unknown> | null> {
+  const candidates = [
+    `https://www.iesdouyin.com/share/note/${awemeId}/`,
+    `https://www.iesdouyin.com/share/video/${awemeId}/`,
+  ];
+  for (const shareUrl of candidates) {
+    try {
+      const res = await fetch(shareUrl, {
+        headers: {
+          "user-agent": MOBILE_UA,
+          referer: "https://www.douyin.com/",
+          accept: "text/html",
+        },
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const rd = extractRouterData(html);
+      if (!rd) continue;
+      const item = findItemInRouterData(rd);
+      if (item) return item;
+    } catch (err) {
+      logger.warn("live-photo-ssr", `SSR 获取 item 失败 ${shareUrl}:`, err);
+    }
+  }
+  return null;
 }
 
 /**
@@ -522,14 +703,14 @@ async function resolveLivePhotosViaApi(awemeId: string): Promise<ResolvedLivePho
 export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string | null> {
   if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return null;
 
-  // 主路径：纯 API 解析（无需无头浏览器，Vercel 可部署，不受海外 IP 浏览器指纹限制）
+  // 主路径：SSR 扫描（无需签名/浏览器，Vercel 可部署；单图实况可在 Vercel 直接生效）
   const apiStart = Date.now();
-  const apiLives = await resolveLivePhotosViaApi(awemeId);
+  const apiLives = await resolveLivePhotosViaSsr(awemeId);
   if (apiLives.length > 0) {
-    console.log(`[live-photo] 单图实况 API 解析成功，耗时 ${Date.now() - apiStart}ms`);
+    console.log(`[live-photo] 单图实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms`);
     return apiLives[0].videoUrl;
   }
-  logger.warn("live-photo", "单图实况 API 未命中，回退无头浏览器");
+  logger.warn("live-photo", "单图实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
   const startTime = Date.now();
@@ -572,16 +753,16 @@ export async function resolveLivePhotosForSlides(
 ): Promise<ResolvedLivePhoto[]> {
   if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return [];
 
-  // 主路径：纯 API 解析（一次请求拿全部 images，不受 slides/note 路由差异影响）
+  // 主路径：SSR 扫描（一次请求拿全部 images，不受 slides/note 路由差异影响）
   const apiStart = Date.now();
-  const apiLives = await resolveLivePhotosViaApi(awemeId);
+  const apiLives = await resolveLivePhotosViaSsr(awemeId);
   if (apiLives.length > 0) {
     console.log(
-      `[live-photo-slides] 混合实况 API 解析成功，耗时 ${Date.now() - apiStart}ms，检测到 ${apiLives.length} 张实况照片`
+      `[live-photo-slides] 混合实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms，检测到 ${apiLives.length} 张实况照片`
     );
     return apiLives;
   }
-  logger.warn("live-photo-slides", "混合实况 API 未命中，回退无头浏览器");
+  logger.warn("live-photo-slides", "混合实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
   const startTime = Date.now();

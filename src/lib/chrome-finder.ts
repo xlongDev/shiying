@@ -9,9 +9,10 @@ import { logger } from "./logger";
  * 优先顺序：环境变量 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH >
  *   常见安装路径 > which/where。
  *
- * 注意：纯 API 实况解析（resolveLivePhotosViaApi）为主路径，无需浏览器；
- * 无头浏览器仅作本地回退，依赖本机已安装的 Chrome。Vercel 等无系统 Chrome
- * 的 serverless 环境靠 API 路径即可工作，无需自带浏览器二进制。
+ * 注意：SSR 扫描实况解析（resolveLivePhotosViaSsr）为主路径，无需浏览器；
+ * 无头浏览器仅作本地回退（多图 slides 实况 SSR 不含动态短片 URL 时），
+ * 依赖本机已安装的 Chrome。Vercel 等无系统 Chrome 的 serverless 环境靠 SSR
+ * 路径即可工作（单图实况可在 Vercel 直接生效），无需自带浏览器二进制。
  */
 export async function findChromeExecutable(): Promise<string | null> {
   const envPath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;

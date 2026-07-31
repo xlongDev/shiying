@@ -181,39 +181,9 @@ export async function parseDouyin(
   let musicUrl =
     extractMusicFromSource(music) || (musicInfo ? extractMusicFromSource(musicInfo) : "");
 
-  // API 兜底：调用 iesdouyin iteminfo 获取完整 music 数据
-  // 注意：此 API 可能返回 status_code: 11110（反爬），仅在 SSR 数据中 music.play_url
-  // 非空但因格式原因未提取到 URL 时才走这里（play_url 存在但 url_list 为对象数组等边界情况）
-  if (!musicUrl) {
-    // 先判断 music.play_url 是否实际存在数据（非空对象/空数组）
-    const musicPlayUrl = (music.play_url ?? {}) as Record<string, unknown>;
-    const playUrlExists =
-      musicPlayUrl &&
-      typeof musicPlayUrl === "object" &&
-      ((Array.isArray(musicPlayUrl.url_list) && (musicPlayUrl.url_list as unknown[]).length > 0) ||
-        (typeof musicPlayUrl.url === "string" && (musicPlayUrl.url as string).length > 0) ||
-        (typeof musicPlayUrl.uri === "string" && (musicPlayUrl.uri as string).length > 0));
-
-    if (playUrlExists) {
-      try {
-        const infoRes = await fetch(
-          `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`,
-          { headers: { "user-agent": MOBILE_UA, referer: "https://www.iesdouyin.com/" } }
-        );
-        if (infoRes.ok) {
-          const infoJson = (await infoRes.json()) as Record<string, unknown>;
-          const infoList = infoJson.item_list as unknown[];
-          if (Array.isArray(infoList) && infoList.length > 0) {
-            const infoItem = infoList[0] as Record<string, unknown>;
-            musicUrl =
-              extractMusicFromSource(infoItem.music) || extractMusicFromSource(infoItem.musicInfo);
-          }
-        }
-      } catch {
-        // API 可能已失效，忽略
-      }
-    }
-  }
+  // 注：原 iesdouyin iteminfo 签名 API 兜底（music 提取失败时回查完整 item）已废弃，
+  // 该 API 现返回 status_code:11110(encrypt_data_miss)。SSR 的 _ROUTER_DATA 已含完整
+  // music.play_url，extractMusicFromSource 足以覆盖，无需再回查失效签名接口。
 
   // 图文帖兜底：music.play_url 可能在 SSR 中为空（如汽水音乐等官方版权音乐），
   // 但 video.play_addr.uri 实际指向的是背景音乐文件（slideshow 音频），直接提取使用
