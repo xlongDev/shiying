@@ -1,6 +1,7 @@
 import { findChromeExecutable } from "./chrome-finder";
 import { puppeteerSemaphore } from "./concurrency";
 import { logger } from "./logger";
+import { MOBILE_UA, pickBestImageUrl, pickFirstUrl } from "./parser/extract";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -10,17 +11,16 @@ const DESKTOP_UA =
 /* ------------------------------------------------------------------ */
 
 /**
- * 在抖音桌面版 note 页面中，实况照片的「动态短片」并不会在 SSR 中暴露 live_photo
- * 字段，也不会通过 hover/scroll 稳定触发网络请求。但页面 hydration 后，完整的
- * aweme 数据（含 images 数组）会存在于 React fiber 树中：
- *   - 普通图片：clipType === 2，video 为 null
- *   - 实况图片：clipType === 5 或 livePhotoType === 1，video 内含 douyinvod 短片 URL
+ * 实况照片识别与资源提取。
  *
- * 因此最可靠的解析方式是：无头浏览器加载页面 → 遍历 React fiber → 找到 images 数组
- * → 按 clipType / livePhotoType 判定实况 → 从 video.bitRateList[0].playAddr 提取短片 URL。
+ * 主路径（纯 API，推荐）：调用 iesdouyin iteminfo 接口直接拿完整 aweme，
+ * 从 images 数组中按 live_photo / clipType===5 / livePhotoType===1 判定实况，
+ * 并从 video.bitRateList[0].playAddr 提取 douyinvod 动态短片 URL。
+ * 无需无头浏览器，因此可在 Vercel 等无系统 Chrome 的 serverless 环境部署，
+ * 也不受海外 IP 的浏览器指纹 / 反爬页面限制（直连数据 API）。
  *
- * 该方式无需逐图 hover/导航，单次加载即可拿到全部实况图片的精确索引与资源，
- * 速度远快于逐图探测，且索引 100% 准确。
+ * 回退路径（无头浏览器）：当 API 未命中（接口变更 / 区域不可见等）时，
+ * 由本地系统 Chrome 遍历 React fiber 兜底。Vercel 无 Chrome，回退自动跳过。
  */
 
 export interface ResolvedLivePhoto {
@@ -428,12 +428,110 @@ async function closeNotePage(page: import("puppeteer-core").Page | null): Promis
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* 主路径：纯 API 解析（无需无头浏览器）                              */
+/* ------------------------------------------------------------------ */
+
+function isLiveImageApi(im: Record<string, unknown>): boolean {
+  return (
+    im.clipType === 5 ||
+    im.clipType === "5" ||
+    im.livePhotoType === 1 ||
+    im.livePhotoType === "1" ||
+    im.live_photo === true ||
+    (typeof im.live_photo === "object" && im.live_photo !== null) ||
+    im.livePhoto === true ||
+    im.isLivePhoto === true
+  );
+}
+
+function extractVideoUrlFromApi(video: unknown): string {
+  if (!video || typeof video !== "object") return "";
+  const v = video as Record<string, unknown>;
+  const bitRateList = Array.isArray(v.bitRateList) ? (v.bitRateList as unknown[]) : [];
+  for (const item of bitRateList) {
+    if (item && typeof item === "object") {
+      const playAddr = (item as Record<string, unknown>).playAddr;
+      const arr = Array.isArray(playAddr) ? (playAddr as unknown[]) : [playAddr];
+      for (const p of arr) {
+        if (p && typeof p === "object" && (p as Record<string, unknown>).src) {
+          const src = (p as Record<string, unknown>).src as string;
+          if (src.includes("douyinvod")) return src;
+        }
+        if (typeof p === "string" && p.includes("douyinvod")) return p;
+      }
+    }
+  }
+  const playAddr = v.play_addr;
+  if (playAddr && typeof playAddr === "object") {
+    const u = pickFirstUrl((playAddr as Record<string, unknown>).url_list);
+    if (u && u.includes("douyinvod")) return u;
+  }
+  return "";
+}
+
+/**
+ * 调用 iesdouyin iteminfo 接口直接拿完整 aweme，从 images 数组提取实况照片。
+ * 返回与无头浏览器路径同构的 ResolvedLivePhoto[]（index 即 images 中的位置）。
+ *
+ * 安全：item_ids 为纯数字 ID（来自已校验的 awemeId），URL 固定拼接，无 SSRF 面。
+ */
+async function resolveLivePhotosViaApi(awemeId: string): Promise<ResolvedLivePhoto[]> {
+  try {
+    const apiRes = await fetch(
+      `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${awemeId}`,
+      {
+        headers: {
+          "user-agent": MOBILE_UA,
+          referer: "https://www.iesdouyin.com/",
+        },
+      }
+    );
+    if (!apiRes.ok) {
+      logger.warn("live-photo-api", `iteminfo API 返回 ${apiRes.status}`);
+      return [];
+    }
+    const json = (await apiRes.json()) as Record<string, unknown>;
+    const itemList = json.item_list as unknown[];
+    if (!Array.isArray(itemList) || itemList.length === 0) {
+      logger.warn("live-photo-api", "iteminfo API 未返回 item_list");
+      return [];
+    }
+    const item = itemList[0] as Record<string, unknown>;
+    const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
+    const out: ResolvedLivePhoto[] = [];
+    images.forEach((img, i) => {
+      const im = img as Record<string, unknown>;
+      if (!isLiveImageApi(im)) return;
+      const imageUrl = pickBestImageUrl(im);
+      const videoUrl = extractVideoUrlFromApi(im.video);
+      if (imageUrl && videoUrl) {
+        out.push({ index: i, imageUrl, videoUrl });
+      }
+    });
+    return out;
+  } catch (err) {
+    logger.warn("live-photo-api", "iteminfo API 调用失败:", err);
+    return [];
+  }
+}
+
 /**
  * 单图实况照片动态短片 URL 提取
  */
 export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string | null> {
   if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return null;
 
+  // 主路径：纯 API 解析（无需无头浏览器，Vercel 可部署，不受海外 IP 浏览器指纹限制）
+  const apiStart = Date.now();
+  const apiLives = await resolveLivePhotosViaApi(awemeId);
+  if (apiLives.length > 0) {
+    console.log(`[live-photo] 单图实况 API 解析成功，耗时 ${Date.now() - apiStart}ms`);
+    return apiLives[0].videoUrl;
+  }
+  logger.warn("live-photo", "单图实况 API 未命中，回退无头浏览器");
+
+  // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];
@@ -474,6 +572,18 @@ export async function resolveLivePhotosForSlides(
 ): Promise<ResolvedLivePhoto[]> {
   if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return [];
 
+  // 主路径：纯 API 解析（一次请求拿全部 images，不受 slides/note 路由差异影响）
+  const apiStart = Date.now();
+  const apiLives = await resolveLivePhotosViaApi(awemeId);
+  if (apiLives.length > 0) {
+    console.log(
+      `[live-photo-slides] 混合实况 API 解析成功，耗时 ${Date.now() - apiStart}ms，检测到 ${apiLives.length} 张实况照片`
+    );
+    return apiLives;
+  }
+  logger.warn("live-photo-slides", "混合实况 API 未命中，回退无头浏览器");
+
+  // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];

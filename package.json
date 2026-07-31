@@ -73,7 +73,6 @@
     "vitest": "^4.1.10"
   },
   "optionalDependencies": {
-    "@sparticuz/chromium": "^149.0.0",
     "ffmpeg-static": "^5.0.0"
   },
   "lint-staged": {
