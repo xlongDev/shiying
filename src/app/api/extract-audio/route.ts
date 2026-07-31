@@ -6,6 +6,7 @@ import path from "path";
 import { Readable } from "stream";
 import { ffmpegSemaphore } from "@/lib/concurrency";
 import { logger } from "@/lib/logger";
+import { isAllowedTarget } from "@/lib/ssrf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export const maxDuration = 300;
  *   5. 清理临时文件
  *
  * 安全加固：
+ *   - SSRF：用户传入的 targetUrl 经 isAllowedTarget 校验白名单 + 非内网 IP（含 snssdk 重定向后再校验）。
  *   - ffmpeg 并发受 ffmpegSemaphore 限制（最多 2 个），release 在 finally 中执行。
  *   - getFfmpegPath() 结果在模块作用域缓存，避免每次调用都重新探测。
  *   - 临时文件在所有返回 / 异常路径均由外层 finally 统一清理。
@@ -41,6 +43,11 @@ export async function GET(req: NextRequest) {
 
   if (!targetUrl) {
     return NextResponse.json({ ok: false, error: "缺少 url 参数" }, { status: 400 });
+  }
+
+  // SSRF：用户传入的 targetUrl 须为白名单内 CDN 主机且解析 IP 非内网。
+  if (!(await isAllowedTarget(targetUrl))) {
+    return NextResponse.json({ ok: false, error: "禁止访问该地址" }, { status: 403 });
   }
 
   // 查找 ffmpeg 路径（结果已缓存）
@@ -64,7 +71,13 @@ export async function GET(req: NextRequest) {
         });
         if (probe.status >= 300 && probe.status < 400) {
           const loc = probe.headers.get("location");
-          if (loc) finalUrl = loc;
+          if (loc) {
+            finalUrl = new URL(loc, targetUrl).toString();
+            // 重定向后的地址可能来自不同主机，需再次做 SSRF 校验。
+            if (!(await isAllowedTarget(finalUrl))) {
+              return NextResponse.json({ ok: false, error: "禁止访问该地址" }, { status: 403 });
+            }
+          }
         }
       } catch {
         // 使用原始 URL
@@ -390,6 +403,7 @@ function getHeaders(url: string): Record<string, string> {
  * 查找可用的 ffmpeg 可执行文件路径（结果在模块作用域缓存）
  * 1. 项目 bin 目录 (./bin/ffmpeg)
  * 2. 系统 PATH (ffmpeg)
+ * 3. serverless 回退：ffmpeg-static（部署到无系统 ffmpeg 的环境时安装该可选依赖）
  */
 async function getFfmpegPath(): Promise<string | null> {
   if (cachedFfmpegPath) return cachedFfmpegPath;
@@ -399,6 +413,19 @@ async function getFfmpegPath(): Promise<string | null> {
     path.join(/*turbopackIgnore: true*/ process.cwd(), "bin", "ffmpeg.exe"),
     "ffmpeg",
   ];
+
+  // serverless 回退：ffmpeg-static（仅在部署时安装该可选依赖后生效）。
+  try {
+    const spec: string = "ffmpeg-static";
+    const staticMod = (await import(/* @vite-ignore */ spec).catch(() => null)) as {
+      default?: string;
+      path?: string;
+    } | null;
+    const staticPath = staticMod?.default ?? staticMod?.path;
+    if (staticPath) candidates.unshift(staticPath);
+  } catch {
+    /* 未安装 ffmpeg-static，忽略 */
+  }
 
   for (const candidate of candidates) {
     if (await checkFfmpeg(candidate)) {

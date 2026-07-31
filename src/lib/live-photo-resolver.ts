@@ -258,7 +258,7 @@ async function loadNotePage(
   awemeId: string,
   path?: string
 ): Promise<import("puppeteer-core").Page | null> {
-  const chromePath = findChromeExecutable();
+  const chromePath = await findChromeExecutable();
   if (!chromePath) {
     logger.warn("live-photo", "未找到系统 Chrome，跳过实况探测");
     return null;

@@ -34,7 +34,7 @@ export const ALLOWED_HOST_SUFFIXES: string[] = [
  */
 export function isPrivateIp(ip: string): boolean {
   // 去掉 IPv6 作用域标识（如 %eth0）与方括号
-  const clean = ip.replace(/[%][^%]*$/, "").replace(/^[[]|[]]$/g, "");
+  const clean = ip.replace(/[%][^%]*$/, "").replace(/^\[|\]$/g, "");
 
   // IPv6 路径
   if (clean.includes(":")) {
@@ -54,6 +54,10 @@ export function isPrivateIp(ip: string): boolean {
   const parts = clean.split(".").map((p) => Number.parseInt(p, 10));
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) {
     return true; // 非法地址，按私有拒绝
+  }
+  // 八位组越界（如 256.1.1.1）同为非法地址，按私有拒绝
+  if (parts.some((n) => n < 0 || n > 255)) {
+    return true;
   }
   const [a, b] = parts;
   if (a === 10) return true; // 10.0.0.0/8

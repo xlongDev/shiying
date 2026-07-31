@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
+import { isAllowedTarget } from "@/lib/ssrf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,9 @@ function extractMusicUrl(musicObj: unknown): string {
  *
  * 当 SSR 解析未提取到 musicUrl 时，通过 iesdouyin iteminfo API 动态获取
  * 适用于图文帖等场景
+ *
+ * 安全加固：musicUrl 来自上游 API 响应，下游 fetch 前仍经 isAllowedTarget
+ * 校验白名单 + 非内网 IP，与 proxy 系列路由统一收口。
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -124,6 +128,12 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     logger.error("download-music", "API error:", err);
     return NextResponse.json({ ok: false, error: "获取音频信息失败" }, { status: 500 });
+  }
+
+  // SSRF：musicUrl 来自上游 API 响应，下游 fetch 前仍须校验白名单 + 非内网 IP，统一收口。
+  if (!(await isAllowedTarget(musicUrl))) {
+    logger.error("download-music", `blocked non-whitelisted URL: ${musicUrl.substring(0, 120)}`);
+    return NextResponse.json({ ok: false, error: "音频地址不合法" }, { status: 403 });
   }
 
   // 2. 代理下载音频文件

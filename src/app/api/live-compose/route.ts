@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { ffmpegSemaphore } from "@/lib/concurrency";
 import { logger } from "@/lib/logger";
+import { isAllowedTarget } from "@/lib/ssrf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export const maxDuration = 300;
  *   6. 清理临时文件
  *
  * 安全加固：
+ *   - SSRF：videoUrl / audioUrl 经 isAllowedTarget 校验白名单 + 非内网 IP。
  *   - ffmpeg 并发受 ffmpegSemaphore 限制（最多 2 个），release 在 finally 中执行。
  *   - getFfmpegPath() 结果在模块作用域缓存，避免每次调用都重新探测。
  *   - 临时文件在所有返回 / 异常路径均由外层 finally 统一清理。
@@ -46,6 +48,11 @@ export async function GET(req: NextRequest) {
       { ok: false, error: "缺少 videoUrl 或 audioUrl 参数" },
       { status: 400 }
     );
+  }
+
+  // SSRF：videoUrl / audioUrl 均为用户传入的上游地址，须校验白名单 + 非内网 IP。
+  if (!(await isAllowedTarget(videoUrl)) || !(await isAllowedTarget(audioUrl))) {
+    return NextResponse.json({ ok: false, error: "禁止访问该地址" }, { status: 403 });
   }
 
   // 查找 ffmpeg（结果已缓存）
@@ -212,6 +219,19 @@ async function getFfmpegPath(): Promise<string | null> {
     path.join(/*turbopackIgnore: true*/ process.cwd(), "bin", "ffmpeg.exe"),
     "ffmpeg",
   ];
+
+  // serverless 回退：ffmpeg-static（仅在部署时安装该可选依赖后生效）。
+  try {
+    const spec: string = "ffmpeg-static";
+    const staticMod = (await import(/* @vite-ignore */ spec).catch(() => null)) as {
+      default?: string;
+      path?: string;
+    } | null;
+    const staticPath = staticMod?.default ?? staticMod?.path;
+    if (staticPath) candidates.unshift(staticPath);
+  } catch {
+    /* 未安装 ffmpeg-static，忽略 */
+  }
 
   for (const candidate of candidates) {
     if (await checkFfmpeg(candidate)) {
