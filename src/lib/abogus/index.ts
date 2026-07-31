@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import crypto from "node:crypto";
 import { SM3_SRC, CORE_SRC } from "./vendor";
 
 /**
@@ -131,12 +132,28 @@ export interface SignedDetailRequest {
   aBogus: string;
   ts: number;
   ttwid: string | null;
+  ttwidSource: "real" | "synthetic" | "none";
+}
+
+/**
+ * 生成一个合成 ttwid cookie（用于诊断：隔离"缺 cookie"与"IP 封锁"两种失败原因）。
+ * 抖音服务端对 ttwid 的校验较宽松，常见爬虫直接发送任意合法格式 ttwid 即可通过
+ * 身份门槛。真实格式为 `ttwid=1|<base64>`，此处用随机字节生成等价结构。
+ */
+export function generateSyntheticTtwid(): string {
+  const rand = crypto.randomBytes(20).toString("base64").replace(/=+$/, "");
+  return "ttwid=1|" + rand;
 }
 
 /**
  * 为 aweme/detail 构造带 a_bogus 签名的请求（标准 web 端查询参数）。
+ * @param opts.forceSyntheticTtwid 为 true 时跳过首页 bootstrap，直接使用合成 ttwid，
+ *        用于验证"空响应是否仅因缺少 ttwid"——若合成 ttwid 仍空响应，则必为 IP 封锁。
  */
-export async function signAwemeDetail(awemeId: string): Promise<SignedDetailRequest> {
+export async function signAwemeDetail(
+  awemeId: string,
+  opts?: { forceSyntheticTtwid?: boolean }
+): Promise<SignedDetailRequest> {
   const ts = Date.now();
   const query =
     "aid=6383&device_platform=webapp&channel=channel_pc_web&webid=local-" +
@@ -144,7 +161,15 @@ export async function signAwemeDetail(awemeId: string): Promise<SignedDetailRequ
     awemeId +
     "&cursor=0&count=1&publish_video_strategy_type=2&pc_client_type=1";
   const aBogus = generateABogus(query, ts);
-  const ttwid = await fetchTtwid();
+  let ttwid: string | null = null;
+  let ttwidSource: "real" | "synthetic" | "none" = "none";
+  if (opts?.forceSyntheticTtwid) {
+    ttwid = generateSyntheticTtwid();
+    ttwidSource = "synthetic";
+  } else {
+    ttwid = await fetchTtwid();
+    ttwidSource = ttwid ? "real" : "none";
+  }
   const url =
     "https://www.douyin.com/aweme/v1/web/aweme/detail/?" +
     query +
@@ -156,5 +181,5 @@ export async function signAwemeDetail(awemeId: string): Promise<SignedDetailRequ
     accept: "application/json",
   };
   if (ttwid) headers.cookie = ttwid;
-  return { url, headers, aBogus, ts, ttwid };
+  return { url, headers, aBogus, ts, ttwid, ttwidSource };
 }
