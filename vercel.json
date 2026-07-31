@@ -3,7 +3,7 @@
   "framework": "nextjs",
   "functions": {
     "src/app/api/parse/route.ts": { "maxDuration": 30 },
-    "src/app/api/parse-live-photo/route.ts": { "maxDuration": 60 },
+    "src/app/api/parse-live-photo/route.ts": { "maxDuration": 60, "memory": 3008 },
     "src/app/api/proxy/route.ts": { "maxDuration": 30 },
     "src/app/api/proxy-media/route.ts": { "maxDuration": 30 },
     "src/app/api/stream/route.ts": { "maxDuration": 60 },

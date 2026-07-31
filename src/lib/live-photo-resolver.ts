@@ -285,6 +285,8 @@ async function loadNotePage(
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
+        "--single-process",
+        "--no-zygote",
         "--disable-gpu",
         "--disable-blink-features=AutomationControlled",
         // 速度优化：禁用不必要的功能

@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   // 交由 Node 运行时原生 require 更稳妥。
   serverExternalPackages: [
     "puppeteer-core",
+    "@sparticuz/chromium",
     "@ffmpeg/ffmpeg",
     "@ffmpeg/util",
     "@ffmpeg/core",
