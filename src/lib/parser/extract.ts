@@ -166,3 +166,59 @@ export function extractMusicFromSource(src: unknown): string {
 
   return "";
 }
+
+/**
+ * 从 HTML 中提取 _ROUTER_DATA / window._ROUTER_DATA 的 JSON 字符串。
+ * 使用大括号深度匹配，比惰性正则更稳健，可处理超大嵌套 JSON。
+ */
+export function extractRouterData(html: string): string | null {
+  const markers = ["window._ROUTER_DATA", "_ROUTER_DATA"];
+  let startIdx = -1;
+  for (const marker of markers) {
+    startIdx = html.indexOf(marker);
+    if (startIdx >= 0) break;
+  }
+  if (startIdx < 0) return null;
+  const eqIdx = html.indexOf("=", startIdx);
+  if (eqIdx < 0) return null;
+  const braceStart = html.indexOf("{", eqIdx);
+  if (braceStart < 0) return null;
+  let depth = 0;
+  for (let i = braceStart; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return html.substring(braceStart, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * 在已解析的 _ROUTER_DATA JSON 中定位 aweme item。
+ * 导航逻辑与 note.ts 主解析器一致（loaderData[pageKey].videoInfoRes.item_list[0]）。
+ */
+export function findItemInRouterData(rd: string): Record<string, unknown> | null {
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(rd);
+  } catch {
+    return null;
+  }
+  const loaderData = (json.loaderData ?? {}) as Record<string, unknown>;
+  const loaderKeys = Object.keys(loaderData);
+  const pageKey =
+    loaderKeys.find((k) => k.includes("video_(id)")) ||
+    loaderKeys.find((k) => k.includes("note_(id)")) ||
+    loaderKeys.find((k) => k.includes("video")) ||
+    loaderKeys.find((k) => k.includes("note"));
+  const pageData = (pageKey ? loaderData[pageKey] : {}) as Record<string, unknown>;
+  const videoInfoRes = (pageData?.videoInfoRes ?? pageData?.videoInfo ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const itemList = (videoInfoRes.item_list ?? []) as unknown[];
+  if (!Array.isArray(itemList) || itemList.length === 0) return null;
+  return itemList[0] as Record<string, unknown>;
+}

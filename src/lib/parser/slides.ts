@@ -5,16 +5,22 @@
 
 import { ParseError } from "./types";
 import type { LivePhotoInfo, ParsedVideo } from "./types";
-import { MOBILE_UA, pickFirstUrl, normalizeUrl, formatNumber, pickBestImageUrl } from "./extract";
+import { pickFirstUrl, normalizeUrl, formatNumber, pickBestImageUrl } from "./extract";
 import { resolveLivePhotosForSlides } from "../live-photo-resolver";
 import { logger } from "../logger";
+import { fetchAwemeItem } from "./aweme-detail";
 
 export async function parseSlides(
   awemeId: string,
   originalUrl: string,
   options?: { skipLivePhoto?: boolean }
 ): Promise<ParsedVideo> {
-  // 1. 尝试通过 iesdouyin SSR 获取基础数据
+  // 1. 获取 aweme item（多源 fallback：SSR → a_bogus 签名 API）
+  const item = await fetchAwemeItem(awemeId);
+  if (!item) {
+    throw new ParseError("混合图文数据获取失败，可能需要更新解析策略", "SLIDES_NO_DATA");
+  }
+
   let desc = "";
   let authorName = "Unknown";
   let avatar = "";
@@ -22,116 +28,60 @@ export async function parseSlides(
   let cover = "";
   const imageList: string[] = [];
   let stats: ParsedVideo["stats"] = {};
-  let duration: number | undefined;
 
-  // 尝试 SSR 获取
-  const shareUrl = `https://www.iesdouyin.com/share/note/${awemeId}/`;
-  const res = await fetch(shareUrl, {
-    headers: {
-      "user-agent": MOBILE_UA,
-      accept: "text/html",
-      "accept-language": "zh-CN,zh;q=0.9",
-      referer: "https://www.douyin.com/",
-    },
-  });
+  const author = (item.author ?? {}) as Record<string, unknown>;
+  const itemStats = (item.statistics ?? {}) as Record<string, unknown>;
+  const music = (item.music ?? {}) as Record<string, unknown>;
+  const images = item.images as unknown[] | null;
 
-  if (res.ok) {
-    const html = await res.text();
-    const dataMatch = html.match(/_ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/);
+  desc = (item.desc as string) ?? "";
+  authorName = (author.nickname as string) ?? "Unknown";
+  const avatarThumb = (author.avatar_thumb ?? {}) as Record<string, unknown>;
+  const avatarMedium = (author.avatar_medium ?? {}) as Record<string, unknown>;
+  avatar = pickFirstUrl(avatarThumb.url_list) || pickFirstUrl(avatarMedium.url_list);
 
-    if (dataMatch) {
-      try {
-        const jsonData = JSON.parse(dataMatch[1]) as Record<string, unknown>;
-        const loaderData = (jsonData.loaderData ?? {}) as Record<string, unknown>;
-        const loaderKeys = Object.keys(loaderData);
-        // slides 的 loaderData key 可能是 note_(id)/page 或 slides_(id)/page
-        const pageKey =
-          loaderKeys.find((k) => k.includes("note_(id)")) ||
-          loaderKeys.find((k) => k.includes("slides_(id)")) ||
-          loaderKeys.find((k) => k.includes("video_(id)")) ||
-          loaderKeys.find((k) => k.includes("note")) ||
-          loaderKeys.find((k) => k.includes("slides")) ||
-          loaderKeys.find((k) => k.includes("video"));
-        const pageData = (
-          pageKey ? (loaderData[pageKey] as Record<string, unknown>) : {}
-        ) as Record<string, unknown>;
-        const videoInfoRes = (pageData.videoInfoRes ?? pageData.videoInfo ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const itemList = (videoInfoRes.item_list ?? []) as unknown[];
+  stats = {
+    likeCount: formatNumber(itemStats.digg_count ?? itemStats.diggCount),
+    commentCount: formatNumber(itemStats.comment_count ?? itemStats.commentCount),
+    shareCount: formatNumber(itemStats.share_count ?? itemStats.shareCount),
+  };
 
-        if (itemList.length > 0) {
-          const item = itemList[0] as Record<string, unknown>;
-          const author = (item.author ?? {}) as Record<string, unknown>;
-          const itemStats = (item.statistics ?? {}) as Record<string, unknown>;
-          const music = (item.music ?? {}) as Record<string, unknown>;
-          const images = item.images as unknown[] | null;
+  // 封面
+  const video = (item.video ?? {}) as Record<string, unknown>;
+  const videoCover = (video.cover ?? {}) as Record<string, unknown>;
+  cover = pickFirstUrl(videoCover.url_list);
 
-          desc = (item.desc as string) ?? "";
-          authorName = (author.nickname as string) ?? "Unknown";
-          const avatarThumb = (author.avatar_thumb ?? {}) as Record<string, unknown>;
-          const avatarMedium = (author.avatar_medium ?? {}) as Record<string, unknown>;
-          avatar = pickFirstUrl(avatarThumb.url_list) || pickFirstUrl(avatarMedium.url_list);
+  // 音乐 — 提取逻辑与 note 类型一致，支持多种来源
+  const musicPlayUrl = (music.play_url ?? {}) as Record<string, unknown>;
+  musicUrl =
+    pickFirstUrl(musicPlayUrl.url_list) ||
+    normalizeUrl(typeof music.url === "string" ? music.url : "") ||
+    normalizeUrl(typeof music.uri === "string" ? music.uri : "");
 
-          stats = {
-            likeCount: formatNumber(itemStats.digg_count ?? itemStats.diggCount),
-            commentCount: formatNumber(itemStats.comment_count ?? itemStats.commentCount),
-            shareCount: formatNumber(itemStats.share_count ?? itemStats.shareCount),
-          };
-
-          // 封面
-          const video = (item.video ?? {}) as Record<string, unknown>;
-          const videoCover = (video.cover ?? {}) as Record<string, unknown>;
-          cover = pickFirstUrl(videoCover.url_list);
-
-          // 音乐 — 提取逻辑与 note 类型一致，支持多种来源
-          const musicPlayUrl = (music.play_url ?? {}) as Record<string, unknown>;
-          musicUrl =
-            pickFirstUrl(musicPlayUrl.url_list) ||
-            normalizeUrl(typeof music.url === "string" ? music.url : "") ||
-            normalizeUrl(typeof music.uri === "string" ? music.uri : "");
-
-          // 图文帖兜底：SSR 中 music.play_url 可能为空（如汽水音乐等官方版权音乐）
-          // 尝试从 video.play_addr 中提取音频 URI 作为降级方案
-          if (!musicUrl) {
-            const videoPlayAddr = (video.play_addr ?? {}) as Record<string, unknown>;
-            const playAddrUri =
-              typeof videoPlayAddr.uri === "string" ? normalizeUrl(videoPlayAddr.uri) : "";
-            if (playAddrUri) {
-              musicUrl = playAddrUri;
-            }
-          }
-
-          // 图片
-          if (Array.isArray(images) && images.length > 0) {
-            for (const img of images) {
-              if (typeof img === "object" && img !== null) {
-                const url = pickBestImageUrl(img as Record<string, unknown>);
-                if (url) imageList.push(url);
-              }
-            }
-            if (!cover && imageList.length > 0) cover = imageList[0];
-          }
-
-          // 时长
-          const rawMusicDuration = formatNumber(music.duration);
-          duration = rawMusicDuration || undefined;
-        }
-      } catch (err) {
-        logger.warn("slides", "SSR JSON 解析失败:", err);
-      }
+  // 图文帖兜底：SSR 中 music.play_url 可能为空（如汽水音乐等官方版权音乐）
+  // 尝试从 video.play_addr 中提取音频 URI 作为降级方案
+  if (!musicUrl) {
+    const videoPlayAddr = (video.play_addr ?? {}) as Record<string, unknown>;
+    const playAddrUri =
+      typeof videoPlayAddr.uri === "string" ? normalizeUrl(videoPlayAddr.uri) : "";
+    if (playAddrUri) {
+      musicUrl = playAddrUri;
     }
   }
 
-  // 2. 如果 SSR 没有数据，尝试通过桌面版 douyin.com 页面获取
-  if (imageList.length === 0) {
-    logger.warn("slides", "SSR 未获取到图片数据，尝试桌面版页面 fallback");
-    // 对于 slides 类型，桌面版 www.douyin.com/note/{id} 可能也能渲染
-    // 这里先抛出错误，让用户知道无法解析
-    // 实际上混合图文的桌面版页面数据是通过客户端 API 获取的
-    // 我们需要通过无头浏览器获取数据
+  // 图片
+  if (Array.isArray(images) && images.length > 0) {
+    for (const img of images) {
+      if (typeof img === "object" && img !== null) {
+        const url = pickBestImageUrl(img as Record<string, unknown>);
+        if (url) imageList.push(url);
+      }
+    }
+    if (!cover && imageList.length > 0) cover = imageList[0];
   }
+
+  // 时长
+  const duration = formatNumber(music.duration) || undefined;
 
   if (imageList.length === 0) {
     throw new ParseError("混合图文数据获取失败，可能需要更新解析策略", "SLIDES_NO_DATA");

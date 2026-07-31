@@ -1,7 +1,17 @@
 import { findChromeExecutable } from "./chrome-finder";
 import { puppeteerSemaphore } from "./concurrency";
 import { logger } from "./logger";
-import { MOBILE_UA, pickBestImageUrl, pickFirstUrl } from "./parser/extract";
+import { fetchAwemeItem } from "./parser/aweme-detail";
+import {
+  MOBILE_UA,
+  pickBestImageUrl,
+  pickFirstUrl,
+  extractRouterData,
+  findItemInRouterData,
+} from "./parser/extract";
+
+// 保持向后兼容：老测试/外部调用仍可从 live-photo-resolver 导入
+export { extractRouterData, findItemInRouterData } from "./parser/extract";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -504,58 +514,6 @@ function extractVideoUrlFromApi(video: unknown): string {
 /* 借鉴 QingZai：抖音服务端把完整 aweme 嵌进分享页 HTML，无需签名。    */
 /* ------------------------------------------------------------------ */
 
-/**
- * 从 HTML 中提取 window._ROUTER_DATA 的 JSON 字符串（括号深度匹配，
- * 比 note.ts 的惰性正则更稳健，可正确处理超大嵌套 JSON）。取不到返回 null。
- */
-export function extractRouterData(html: string): string | null {
-  const marker = "window._ROUTER_DATA";
-  const startIdx = html.indexOf(marker);
-  if (startIdx < 0) return null;
-  const eqIdx = html.indexOf("=", startIdx);
-  if (eqIdx < 0) return null;
-  const braceStart = html.indexOf("{", eqIdx);
-  if (braceStart < 0) return null;
-  let depth = 0;
-  for (let i = braceStart; i < html.length; i++) {
-    const ch = html[i];
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return html.substring(braceStart, i + 1);
-    }
-  }
-  return null;
-}
-
-/**
- * 在已解析的 _ROUTER_DATA JSON 字符串中定位 aweme item，
- * 导航逻辑与 note.ts 主解析器一致（loaderData[pageKey].videoInfoRes.item_list[0]）。
- */
-function findItemInRouterData(rd: string): Record<string, unknown> | null {
-  let json: Record<string, unknown>;
-  try {
-    json = JSON.parse(rd);
-  } catch {
-    return null;
-  }
-  const loaderData = (json.loaderData ?? {}) as Record<string, unknown>;
-  const loaderKeys = Object.keys(loaderData);
-  const pageKey =
-    loaderKeys.find((k) => k.includes("video_(id)")) ||
-    loaderKeys.find((k) => k.includes("note_(id)")) ||
-    loaderKeys.find((k) => k.includes("video")) ||
-    loaderKeys.find((k) => k.includes("note"));
-  const pageData = (pageKey ? loaderData[pageKey] : {}) as Record<string, unknown>;
-  const videoInfoRes = (pageData?.videoInfoRes ?? pageData?.videoInfo ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const itemList = (videoInfoRes.item_list ?? []) as unknown[];
-  if (!Array.isArray(itemList) || itemList.length === 0) return null;
-  return itemList[0] as Record<string, unknown>;
-}
-
 /** 从实况 video 对象中提取 douyinvod 短片 URL，兼容 url_list / play_addr / bitRateList 多形态 */
 function extractLivePhotoVideoUrl(v: unknown): string {
   if (!v || typeof v !== "object") return "";
@@ -585,10 +543,10 @@ function extractLivePhotoVideoUrl(v: unknown): string {
  *   2) images[] 数组中带 clipType===5 / livePhotoType===1 / live_photo 标记的图片
  *   3) 全局兜底：单图帖时扫描整段 JSON 中的 douyinvod URL（仿 QingZai findDouyinvodUrl）
  */
-export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
-  const item = findItemInRouterData(rd);
-  if (!item) return [];
-
+export function scanLivePhotosInItem(
+  item: Record<string, unknown>,
+  rd?: string
+): ResolvedLivePhoto[] {
   const out: ResolvedLivePhoto[] = [];
 
   // 路径 1：顶层 image_info.live_photo
@@ -617,7 +575,7 @@ export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
   if (out.length > 0) return out;
 
   // 路径 3：单图兜底，全局扫描 douyinvod（仿 QingZai findDouyinvodUrl）
-  if (images.length === 1) {
+  if (images.length === 1 && rd) {
     const m = rd.match(/https?:\/\/[^"\\\s)]*douyinvod[^"\\\s)]*/);
     if (m) {
       const imageUrl = pickBestImageUrl(images[0] as Record<string, unknown>);
@@ -625,6 +583,12 @@ export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
     }
   }
   return out;
+}
+
+export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
+  const item = findItemInRouterData(rd);
+  if (!item) return [];
+  return scanLivePhotosInItem(item, rd);
 }
 
 /**
@@ -635,6 +599,7 @@ export function scanLivePhotosInRouterData(rd: string): ResolvedLivePhoto[] {
  * 安全：awemeId 为纯数字（来自已校验的解析），URL 固定拼接，无 SSRF 面。
  */
 async function resolveLivePhotosViaSsr(awemeId: string): Promise<ResolvedLivePhoto[]> {
+  // 路径 1：SSR 分享页（最快）
   const candidates = [
     `https://www.iesdouyin.com/share/note/${awemeId}/`,
     `https://www.iesdouyin.com/share/video/${awemeId}/`,
@@ -650,6 +615,17 @@ async function resolveLivePhotosViaSsr(awemeId: string): Promise<ResolvedLivePho
       });
       if (!res.ok) continue;
       const html = await res.text();
+      // WAF 挑战页没有 _ROUTER_DATA，直接走下方 API 兜底
+      const htmlHead = html.slice(0, 6000).toLowerCase();
+      if (
+        htmlHead.includes("waf_js") ||
+        htmlHead.includes("wafchallengeid") ||
+        htmlHead.includes("argus-csp-token") ||
+        htmlHead.includes("/waf-jschallenge/")
+      ) {
+        logger.warn("live-photo-ssr", `SSR 被 WAF 拦截 ${shareUrl}`);
+        continue;
+      }
       const rd = extractRouterData(html);
       if (!rd) continue;
       const lives = scanLivePhotosInRouterData(rd);
@@ -658,43 +634,27 @@ async function resolveLivePhotosViaSsr(awemeId: string): Promise<ResolvedLivePho
       logger.warn("live-photo-ssr", `SSR 扫描失败 ${shareUrl}:`, err);
     }
   }
+
+  // 路径 2：a_bogus 签名 API（国内 IP 可用；SSR 被 WAF 时的兜底）
+  logger.warn("live-photo-ssr", "SSR 未命中实况，回退 a_bogus 签名 API 扫描");
+  const item = await fetchAwemeItem(awemeId);
+  if (item) {
+    const lives = scanLivePhotosInItem(item);
+    if (lives.length > 0) return lives;
+  }
   return [];
 }
 
 /**
  * 移动端 UA 抓取 iesdouyin 分享页 SSR，返回完整 aweme item（含 music / 视频等字段）。
- * 复用 extractRouterData + findItemInRouterData（与实况解析、note 主解析同源），
- * 无需签名、可在 Vercel 运行。供 download-music 等需要 item 内音乐地址的路由复用。
+ * 现在内部复用 fetchAwemeItem，因此 SSR 被 WAF 时会自动回退 a_bogus 签名 API。
  *
- * 安全：awemeId 为纯数字（来自已校验解析），URL 固定拼接，无 SSRF 面。
+ * 安全：awemeId 为纯数字（来自已校验解析）；URL 固定拼接，无 SSRF 面。
  */
 export async function fetchAwemeItemViaSsr(
   awemeId: string
 ): Promise<Record<string, unknown> | null> {
-  const candidates = [
-    `https://www.iesdouyin.com/share/note/${awemeId}/`,
-    `https://www.iesdouyin.com/share/video/${awemeId}/`,
-  ];
-  for (const shareUrl of candidates) {
-    try {
-      const res = await fetch(shareUrl, {
-        headers: {
-          "user-agent": MOBILE_UA,
-          referer: "https://www.douyin.com/",
-          accept: "text/html",
-        },
-      });
-      if (!res.ok) continue;
-      const html = await res.text();
-      const rd = extractRouterData(html);
-      if (!rd) continue;
-      const item = findItemInRouterData(rd);
-      if (item) return item;
-    } catch (err) {
-      logger.warn("live-photo-ssr", `SSR 获取 item 失败 ${shareUrl}:`, err);
-    }
-  }
-  return null;
+  return fetchAwemeItem(awemeId);
 }
 
 /**

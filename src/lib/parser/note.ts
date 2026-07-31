@@ -6,7 +6,6 @@
 import { ParseError } from "./types";
 import type { ParsedVideo } from "./types";
 import {
-  MOBILE_UA,
   extractUrl,
   normalizeUrl,
   pickFirstUrl,
@@ -19,6 +18,7 @@ import {
 import { resolveLivePhotoVideoUrl } from "../live-photo-resolver";
 import { parseSlides } from "./slides";
 import { logger } from "../logger";
+import { fetchAwemeItem } from "./aweme-detail";
 
 export async function parseDouyin(
   rawUrl: string,
@@ -50,63 +50,11 @@ export async function parseDouyin(
     return parseSlides(awemeId, longUrl, options);
   }
 
-  // 3. 请求 iesdouyin 分享页
-  const shareUrl =
-    contentType === "note"
-      ? `https://www.iesdouyin.com/share/note/${awemeId}/`
-      : `https://www.iesdouyin.com/share/video/${awemeId}/`;
-  const res = await fetch(shareUrl, {
-    headers: {
-      "user-agent": MOBILE_UA,
-      accept: "text/html",
-      "accept-language": "zh-CN,zh;q=0.9",
-      referer: "https://www.douyin.com/",
-    },
-  });
-
-  if (!res.ok) {
-    throw new ParseError(`获取分享页失败 (HTTP ${res.status})`, "SHARE_PAGE_FAILED");
-  }
-
-  const html = await res.text();
-
-  // 4. 提取 _ROUTER_DATA
-  const dataMatch = html.match(/_ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/);
-  if (!dataMatch) {
+  // 3. 获取 aweme item（多源 fallback：SSR → a_bogus 签名 API → 浏览器兜底）
+  const item = await fetchAwemeItem(awemeId);
+  if (!item) {
     throw new ParseError("页面数据提取失败，可能接口已变更", "NO_ROUTER_DATA");
   }
-
-  let jsonData: Record<string, unknown>;
-  try {
-    jsonData = JSON.parse(dataMatch[1]);
-  } catch {
-    throw new ParseError("解析 JSON 数据失败", "JSON_PARSE_ERROR");
-  }
-
-  // 5. 查找 item_list
-  // 兼容 video 和 note 两种页面：loaderData key 可能为 video_(id)/page 或 note_(id)/page
-  const loaderData = (jsonData.loaderData ?? {}) as Record<string, unknown>;
-  const loaderKeys = Object.keys(loaderData);
-  const pageKey =
-    loaderKeys.find((k) => k.includes("video_(id)")) ||
-    loaderKeys.find((k) => k.includes("note_(id)")) ||
-    loaderKeys.find((k) => k.includes("video")) ||
-    loaderKeys.find((k) => k.includes("note"));
-  const pageData = (pageKey ? (loaderData[pageKey] as Record<string, unknown>) : {}) as Record<
-    string,
-    unknown
-  >;
-  const videoInfoRes = (pageData?.videoInfoRes ?? pageData?.videoInfo ?? {}) as Record<
-    string,
-    unknown
-  >;
-  const itemList = (videoInfoRes.item_list ?? []) as unknown[];
-
-  if (itemList.length === 0) {
-    throw new ParseError("视频可能已被删除或不可访问", "NO_ITEM");
-  }
-
-  const item = itemList[0] as Record<string, unknown>;
   const video = (item.video ?? {}) as Record<string, unknown>;
   const author = (item.author ?? {}) as Record<string, unknown>;
   const stats = (item.statistics ?? {}) as Record<string, unknown>;
