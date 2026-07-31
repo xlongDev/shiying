@@ -7,3 +7,7 @@ pnpm-lock.yaml
 public/ffmpeg
 *.wasm
 *.md
+
+# AUTO-GENERATED a_bogus vendor（内联大字符串，无需 prettier 格式化）
+src/lib/abogus/vendor.ts
+live-photo-service/abogus-vendor.js

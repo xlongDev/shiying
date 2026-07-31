@@ -1,0 +1,14 @@
+{
+  "name": "live-photo-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "抖音实况照片解析服务（a_bogus 纯 Node 签名，零浏览器，需部署在国内 IP）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -50,10 +50,11 @@ function createBrowserSandbox(userAgent: string): any {
   return box.proxy;
 }
 
-let sandbox: any = null;
-
 function getSandbox(): any {
-  if (sandbox) return sandbox;
+  // 每次生成使用全新沙箱：a_bogus 核心脚本会在执行 makeABogus 时改写自身全局状态
+  // （如 U 数组、程序计数器），复用沙箱会导致第二次签名被污染（非法字符/完全错误）。
+  // vm 初始化 36KB 源码耗时 <1ms，性能可忽略，正确性优先。Vercel warm lambda 复用
+  // 进程时这一点尤为关键。
   const navigator = createBrowserSandbox(PC_UA);
   const window = createBrowserSandbox(PC_UA);
   const ctx: any = {
@@ -83,7 +84,6 @@ function getSandbox(): any {
   vm.createContext(ctx);
   vm.runInContext(SM3_SRC, ctx, { filename: "sm3.js" });
   vm.runInContext(CORE_SRC, ctx, { filename: "abogus-core.js" });
-  sandbox = ctx;
   return ctx;
 }
 

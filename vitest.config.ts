@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "live-photo-service/**/*.test.ts"],
     setupFiles: ["./vitest.setup.ts"],
     // Parser pure functions + parseVideo 在 node 环境运行；组件测试用每文件
     // `// @vitest-environment jsdom` 指令切到 jsdom。
