@@ -1,68 +1,28 @@
 /**
  * 无头浏览器兜底：当 SSR（iesdouyin）与 a_bogus 签名 API 均不可用时，
- * 用真实 Chrome 加载抖音桌面页面，读取渲染后的 window._ROUTER_DATA 取得完整 aweme item。
+ * 用真实 Chrome 加载抖音桌面页面，读取渲染后的 window._ROUTER_DATA 或遍历 React
+ * fiber 取得完整 aweme item。
  *
  * 为何需要这一环：
  *  - 抖音对裸 Node fetch 的 iesdouyin 分享页会做 WAF（首请求放行、同 IP 后续挑战），
  *    且 a_bogus 签名 API 在海外 IP 会被地理封锁、返回空响应；
- *  - 真实 Chrome 具备正确 TLS 指纹与 cookie 处理，几乎不触发 WAF，可稳定拿到 SSR 数据。
+ *  - 真实 Chrome 具备正确 TLS 指纹与 cookie 处理，几乎不触发 WAF，可稳定拿到数据。
  *
  * 适用 / 不适用：
  *  - 本地开发机有系统 Chrome（puppeteer-core）时生效，覆盖"SSR 被 WAF + a_bogus 被封"的死局；
- *  - Vercel 等无 Chrome 环境：findChromeExecutable 返回 null，自动跳过，不会破坏构建。
+ *  - Vercel 等无 Chrome 环境：acquirePage 返回 null，自动跳过，不会破坏构建。
+ *
+ * 本模块复用 browser-pool 的共享浏览器（不再各自冷启动 Chrome），并采用与
+ * live-photo-resolver 同源的健壮 fiber 遍历（祖先节点查找 + memoizedProps/memoizedState
+ * + null 守卫 + 轮询等待），避免旧实现直接 Object.keys(seed) 在导航中节点 detach 时
+ * 抛 "Cannot convert undefined or null to object"。
  *
  * 注意：page.evaluate 的回调会被序列化后发往浏览器执行，不能引用模块作用域的
  * 变量 / 函数 / import，所有 DOM 读取逻辑必须内联在回调内部。
  */
-import { findChromeExecutable } from "./chrome-finder";
-import { puppeteerSemaphore } from "./concurrency";
 import { logger } from "./logger";
+import { acquirePage, releasePage, navigateAndWait } from "./browser-pool";
 import { findItemInRouterData } from "./parser/extract";
-
-const DESKTOP_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-// 与 live-photo-resolver.openNoteBrowser 同源的启动参数，保证本地无头浏览器稳定拉起
-const CHROME_LAUNCH_ARGS = [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-  "--disable-dev-shm-usage",
-  "--single-process",
-  "--no-zygote",
-  "--disable-gpu",
-  "--disable-blink-features=AutomationControlled",
-  "--disable-extensions",
-  "--disable-background-networking",
-  "--disable-default-apps",
-  "--disable-sync",
-  "--no-first-run",
-  "--disable-web-security",
-];
-
-/**
- * 等待抖音桌面页完成 hydration：出现图片查看器、note 容器或 video 即代表数据已挂载。
- * 与 live-photo-resolver 的 openNoteBrowser / navigateNotePage 保持一致，该逻辑已在本地验证可拿到实况数据。
- */
-async function waitForHydration(
-  page: import("puppeteer-core").Page,
-  startTime: number
-): Promise<void> {
-  try {
-    await page.waitForFunction(
-      () =>
-        !!document.querySelector(".dySwiperSlide") ||
-        !!document.querySelector(".note-detail-container") ||
-        !!document.querySelector("video"),
-      { timeout: 5000 }
-    );
-  } catch {
-    // 超时也继续，下方仍有固定等待兜底
-  }
-  logger.info("aweme-detail", `浏览器 hydration 检测完成 (${Date.now() - startTime}ms)`);
-
-  // 短暂等待 React 完成渲染与数据注入
-  await new Promise((r) => setTimeout(r, 500));
-}
 
 /**
  * 在浏览器上下文内读取 window._ROUTER_DATA（优先），缺失时回退扫描内联 <script>。
@@ -103,18 +63,40 @@ function readRouterDataInPage(): string | null {
 
 /**
  * 在浏览器上下文内遍历 React fiber 树，尝试找到完整 aweme item。
- * 抖音桌面端 hydration 后，大量数据通过 fiber 传递，_ROUTER_DATA 可能不完整或结构不同。
+ * 抖音桌面端 hydration 后，大量数据通过 fiber 传递，_ROUTER_DATA 可能不完整或缺失。
+ *
  * 判定：对象含 desc + author + (music|statistics|video|images) 即可视为 item；
  * 若存在多个候选，优先匹配 aweme_id / awemeId === targetId。
+ *
+ * 健壮性（修复旧实现"Cannot convert undefined or null to object"）：
+ *  - getFiber 向上遍历祖先节点查找 __reactFiber，避免 seed 节点未直接挂 fiber 时直接返回 null；
+ *  - 遍历 memoizedProps + memoizedState + child/sibling/return，覆盖 state 中的数据；
+ *  - 全程 null / 类型守卫，绝不 Object.keys 未定义对象。
  */
 function extractItemFromFiberInPage(targetId: string): Record<string, unknown> | null {
-  const seed =
+  function getFiber(el: Element | null): Record<string, unknown> | null {
+    if (!el) return null;
+    const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
+    return key
+      ? ((el as unknown as Record<string, unknown>)[key] as Record<string, unknown>)
+      : null;
+  }
+
+  const seedEl: Element | null =
     document.querySelector(".dySwiperSlide") ||
     document.querySelector(".note-detail-container") ||
     document.querySelector("video") ||
     document.body;
-  const key = Object.keys(seed).find((k) => k.startsWith("__reactFiber"));
-  if (!key) return null;
+  let start = getFiber(seedEl);
+  if (!start) {
+    // 向上遍历 DOM 树，找到首个带 fiber 的祖先节点
+    let e: Element | null = document.body;
+    while (e && !start) {
+      start = getFiber(e);
+      e = e.firstElementChild;
+    }
+  }
+  if (!start) return null;
 
   const isItemLike = (o: unknown): boolean => {
     if (!o || typeof o !== "object") return false;
@@ -127,7 +109,6 @@ function extractItemFromFiberInPage(targetId: string): Record<string, unknown> |
     const hasImages = Array.isArray(obj.images);
     return hasDesc && hasAuthor && (hasMusic || hasStats || hasVideo || hasImages);
   };
-
   const getId = (o: unknown): string | undefined => {
     if (!o || typeof o !== "object") return undefined;
     const obj = o as Record<string, unknown>;
@@ -136,42 +117,41 @@ function extractItemFromFiberInPage(targetId: string): Record<string, unknown> |
   };
 
   const visited = new Set<unknown>();
-  const stack: unknown[] = [(seed as unknown as Record<string, unknown>)[key]];
+  const stack: unknown[] = [start];
   let bestMatch: Record<string, unknown> | null = null;
-
-  while (stack.length) {
+  let n = 0;
+  // 遍历上限：slides（混合图文）fiber 树较深，原 60k 可能在抵达 item 前就终止，
+  // 提高到 200k 与 live-photo-resolver 保持一致。
+  while (stack.length && n < 200000) {
     const f = stack.pop() as Record<string, unknown> | undefined;
+    n++;
     if (!f || typeof f !== "object" || visited.has(f)) continue;
     visited.add(f);
 
-    const props = f.memoizedProps;
-    if (props && typeof props === "object") {
-      const candidates: Record<string, unknown>[] = [];
-      if (isItemLike(props)) candidates.push(props as Record<string, unknown>);
+    const subjects: unknown[] = [];
+    if (f.memoizedProps && typeof f.memoizedProps === "object") subjects.push(f.memoizedProps);
+    if (f.memoizedState && typeof f.memoizedState === "object") subjects.push(f.memoizedState);
 
-      // 否则在 props 子树中浅层搜索
-      const queue: unknown[] = [props];
+    for (const subj of subjects) {
+      const queue: unknown[] = [subj];
       const seen = new Set<unknown>();
-      let n = 0;
-      while (queue.length && n < 5000) {
-        n++;
+      let m = 0;
+      while (queue.length && m < 8000) {
+        m++;
         const cur = queue.shift();
         if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
         seen.add(cur);
-        if (isItemLike(cur)) candidates.push(cur as Record<string, unknown>);
-        if (Array.isArray(cur)) {
-          queue.push(...cur);
-        } else {
+        if (isItemLike(cur)) {
+          if (getId(cur) === targetId) return cur as Record<string, unknown>;
+          if (!bestMatch) bestMatch = cur as Record<string, unknown>;
+        }
+        if (Array.isArray(cur)) queue.push(...cur);
+        else {
           for (const k of Object.keys(cur)) {
             if (k.startsWith("__react")) continue;
             queue.push((cur as Record<string, unknown>)[k]);
           }
         }
-      }
-
-      for (const cand of candidates) {
-        if (getId(cand) === targetId) return cand; // 精确匹配直接返回
-        if (!bestMatch) bestMatch = cand; // 保留第一个遇到的候选
       }
     }
 
@@ -184,74 +164,34 @@ function extractItemFromFiberInPage(targetId: string): Record<string, unknown> |
 
 /**
  * 通过无头浏览器获取完整 aweme item（含 video / images / author / music / statistics）。
- * 优先加载 www.douyin.com 桌面端（已被本地实况探测验证可用），
- * iesdouyin 分享页作为次选（桌面浏览器可能被 WAF）。
+ * 复用 browser-pool 的常驻共享浏览器（warm 复用，不再冷启动），优先加载 www.douyin.com
+ * 桌面端（已被实况探测验证可绕过 WAF），依次尝试 note / video 两条路由。
+ *
+ * 健壮性：navigateAndWait 已做 hydration + 数据注入轮询；evaluate 异常（含 SPA 导航中
+ * 的 Execution context was destroyed）被捕获并切换到下一个候选 URL。
  *
  * @returns item 对象，或 null（无 Chrome / 导航失败 / 未找到 item）
  */
 export async function loadRouterDataViaBrowser(
   awemeId: string
 ): Promise<Record<string, unknown> | null> {
-  const chromePath = await findChromeExecutable();
-  if (!chromePath) {
-    logger.warn("aweme-detail", "未找到系统 Chrome，跳过浏览器兜底");
+  const page = await acquirePage();
+  if (!page) {
+    logger.warn("aweme-detail", "未获取到浏览器 page（无 Chrome / 池不可用），跳过浏览器兜底");
     return null;
   }
 
-  let puppeteer: typeof import("puppeteer-core");
+  // 候选顺序：www.douyin.com 桌面端优先（被验证可绕过 WAF）。
+  // 注：iesdouyin 分享页在此处常 ERR_ABORTED 浪费时间，且桌面端数据更全，故不列入。
+  const candidates = [
+    `https://www.douyin.com/note/${awemeId}`,
+    `https://www.douyin.com/video/${awemeId}`,
+  ];
+
   try {
-    puppeteer = await import("puppeteer-core");
-  } catch (err) {
-    logger.warn("aweme-detail", "puppeteer-core 未安装，跳过浏览器兜底", err);
-    return null;
-  }
-
-  // 限制并发 Chrome 实例数，避免本地内存压力下多实例 OOM
-  await puppeteerSemaphore.acquire();
-  let browser: import("puppeteer-core").Browser | null = null;
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: chromePath,
-      args: CHROME_LAUNCH_ARGS,
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(DESKTOP_UA);
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setCacheEnabled(true);
-
-    // 候选顺序：www.douyin.com 桌面端优先（被验证可绕过 WAF），iesdouyin 分享页作为次选
-    const candidates = [
-      `https://www.douyin.com/note/${awemeId}`,
-      `https://www.douyin.com/video/${awemeId}`,
-      `https://www.iesdouyin.com/share/note/${awemeId}/`,
-      `https://www.iesdouyin.com/share/video/${awemeId}/`,
-    ];
-
     for (const url of candidates) {
-      const startTime = Date.now();
-      let gotoOk = true;
-      try {
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
-      } catch (gotoErr) {
-        gotoOk = false;
-        logger.warn(
-          "aweme-detail",
-          `浏览器导航未完成 ${url}:`,
-          (gotoErr as Error)?.message ?? gotoErr
-        );
-      }
-      if (!gotoOk) continue;
-
-      const finalUrl = page.url();
-      logger.info(
-        "aweme-detail",
-        `浏览器导航完成 ${url} -> ${finalUrl} (${Date.now() - startTime}ms)`
-      );
-
-      // 等 React hydration（抖音桌面端是 SPA，_ROUTER_DATA 可能 domcontentloaded 后才注入）
-      await waitForHydration(page, startTime);
+      const navOk = await navigateAndWait(page, url, 15000);
+      if (!navOk) continue;
 
       // 尝试读取 _ROUTER_DATA
       let rd: string | null = null;
@@ -260,61 +200,42 @@ export async function loadRouterDataViaBrowser(
       } catch (evalErr) {
         logger.warn(
           "aweme-detail",
-          `读取 _ROUTER_DATA 异常:`,
+          `读取 _ROUTER_DATA 异常（尝试下一候选）:`,
           (evalErr as Error)?.message ?? evalErr
         );
+        continue;
       }
-
-      const html = await page.content().catch(() => "");
-      logger.info(
-        "aweme-detail",
-        `候选页状态: url=${finalUrl} htmlLen=${html.length} hasRouterInHtml=${html.includes("_ROUTER_DATA")} hasRouterData=${!!rd}`
-      );
 
       if (rd) {
         const item = findItemInRouterData(rd);
         if (item) {
-          logger.info(
-            "aweme-detail",
-            `浏览器兜底命中(_ROUTER_DATA) ${url} (${Date.now() - startTime}ms)`
-          );
-          await browser.close();
-          puppeteerSemaphore.release();
+          logger.info("aweme-detail", `浏览器兜底命中(_ROUTER_DATA) ${url}`);
           return item;
         }
         logger.warn("aweme-detail", `浏览器兜底读取到 _ROUTER_DATA 但未解析出 item ${url}`);
       }
 
-      // _ROUTER_DATA 未命中：抖音桌面端数据可能只在 React fiber 中，遍历 fiber 兜底
+      // _ROUTER_DATA 未命中：遍历 fiber 兜底（SPA 数据可能只在 fiber 中）
       try {
         const fiberItem = await page.evaluate(extractItemFromFiberInPage, awemeId);
         if (fiberItem) {
-          logger.info("aweme-detail", `浏览器兜底命中(fiber) ${url} (${Date.now() - startTime}ms)`);
-          await browser.close();
-          puppeteerSemaphore.release();
+          logger.info("aweme-detail", `浏览器兜底命中(fiber) ${url}`);
           return fiberItem;
         }
       } catch (fiberErr) {
-        logger.warn("aweme-detail", `fiber 兜底异常:`, (fiberErr as Error)?.message ?? fiberErr);
+        logger.warn(
+          "aweme-detail",
+          `fiber 兜底异常（尝试下一候选）:`,
+          (fiberErr as Error)?.message ?? fiberErr
+        );
+        // 导航中途 context 销毁时继续下一候选（同一 page 重新 goto 会重建 context）
+        continue;
       }
     }
 
     logger.warn("aweme-detail", "浏览器兜底未找到 item");
-    try {
-      await browser.close();
-    } catch {
-      /* ignore */
-    }
-    puppeteerSemaphore.release();
     return null;
-  } catch (err) {
-    logger.warn("aweme-detail", "浏览器兜底失败:", err);
-    try {
-      if (browser) await browser.close();
-    } catch {
-      /* ignore */
-    }
-    puppeteerSemaphore.release();
-    return null;
+  } finally {
+    await releasePage(page);
   }
 }

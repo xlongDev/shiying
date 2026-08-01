@@ -1,6 +1,5 @@
-import { findChromeExecutable } from "./chrome-finder";
-import { puppeteerSemaphore } from "./concurrency";
 import { logger } from "./logger";
+import { acquirePage, releasePage } from "./browser-pool";
 import { fetchAwemeItem } from "./parser/aweme-detail";
 import {
   MOBILE_UA,
@@ -12,9 +11,6 @@ import {
 
 // 保持向后兼容：老测试/外部调用仍可从 live-photo-resolver 导入
 export { extractRouterData, findItemInRouterData } from "./parser/extract";
-
-const DESKTOP_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /* ------------------------------------------------------------------ */
 /* 实况照片（LivePhoto）解析                                          */
@@ -368,118 +364,10 @@ function isDefinitelyStaticItem(item: Record<string, unknown>): boolean {
 }
 
 /**
- * 常驻共享浏览器（复用池）：本地有系统 Chrome 时启动一台，跨请求复用，
- * 避免每次探测都冷启动一台全新 Chrome 白白烧 ~4s。仅首个 uncertain 请求付出启动成本，
- * 后续请求直接开新 page 复用 warm 浏览器（导航 ~1-2s 即可）。
- *
- * Vercel 等无系统 Chrome 的环境 findChromeExecutable 返回 null，本模块整体跳过，
- * 不影响纯 API 主路径。浏览器进程崩溃（disconnected）时自动置空，下次请求重启动。
+ * 实况照片探测复用 browser-pool 的共享浏览器（见 ./browser-pool）。
+ * openNoteBrowser / closeNoteBrowser 已迁移为 browser-pool 的 acquirePage /
+ * releasePage；以下 navigateNotePage 负责导航 + hydration 等待。
  */
-let sharedBrowser: import("puppeteer-core").Browser | null = null;
-let browserLaunchPromise: Promise<import("puppeteer-core").Browser | null> | null = null;
-let cleanupRegistered = false;
-
-async function getSharedBrowser(
-  chromePath: string,
-  puppeteer: typeof import("puppeteer-core")
-): Promise<import("puppeteer-core").Browser | null> {
-  if (sharedBrowser && sharedBrowser.connected) {
-    console.log("[live-photo-pool] 复用常驻浏览器（warm）");
-    return sharedBrowser;
-  }
-  if (browserLaunchPromise) return browserLaunchPromise;
-  console.log("[live-photo-pool] 启动常驻浏览器（cold）...");
-  browserLaunchPromise = (async () => {
-    try {
-      const b = await puppeteer.launch({
-        headless: true,
-        executablePath: chromePath,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-          "--disable-blink-features=AutomationControlled",
-          "--disable-extensions",
-          "--disable-background-networking",
-          "--disable-default-apps",
-          "--disable-sync",
-          "--no-first-run",
-          "--disable-web-security",
-        ],
-      });
-      b.on("disconnected", () => {
-        sharedBrowser = null;
-        browserLaunchPromise = null;
-      });
-      sharedBrowser = b;
-      registerBrowserCleanup(b);
-      return b;
-    } catch (err) {
-      logger.error("live-photo", "共享浏览器启动失败:", err);
-      sharedBrowser = null;
-      return null;
-    } finally {
-      browserLaunchPromise = null;
-    }
-  })();
-  return browserLaunchPromise;
-}
-
-/** 进程退出时关闭常驻浏览器（仅注册一次），避免孤儿 Chrome 占用资源 */
-function registerBrowserCleanup(browser: import("puppeteer-core").Browser): void {
-  if (cleanupRegistered) return;
-  cleanupRegistered = true;
-  const closeOnce = () => {
-    browser.close().catch(() => {});
-  };
-  process.once("SIGINT", closeOnce);
-  process.once("SIGTERM", closeOnce);
-}
-
-/**
- * 在复用池中获取一个浏览器 page（供实况探测使用）。
- * 获取并发许可；无系统 Chrome / puppeteer 未安装时返回 null。
- * 返回的 browser 为常驻共享实例；调用方务必通过 closeNoteBrowser(page) 关闭 page，
- * 切勿关闭共享浏览器本身。
- */
-async function openNoteBrowser(_awemeId: string): Promise<{
-  browser: import("puppeteer-core").Browser;
-  page: import("puppeteer-core").Page;
-} | null> {
-  const chromePath = await findChromeExecutable();
-  if (!chromePath) {
-    logger.warn("live-photo", "未找到系统 Chrome，跳过实况探测");
-    return null;
-  }
-
-  let puppeteer: typeof import("puppeteer-core");
-  try {
-    puppeteer = await import("puppeteer-core");
-  } catch (err) {
-    logger.warn("live-photo", "puppeteer-core 未安装，跳过实况探测", err);
-    return null;
-  }
-
-  // 限制并发探测任务（page）数量，避免单台共享浏览器被压垮
-  await puppeteerSemaphore.acquire();
-  try {
-    const browser = await getSharedBrowser(chromePath, puppeteer);
-    if (!browser) {
-      puppeteerSemaphore.release();
-      return null;
-    }
-    const page = await browser.newPage();
-    await page.setUserAgent(DESKTOP_UA);
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setCacheEnabled(true);
-    return { browser, page };
-  } catch (err) {
-    logger.error("live-photo", "打开探测页面失败:", err);
-    puppeteerSemaphore.release();
-    return null;
-  }
-}
 
 /**
  * 在已打开的页面上导航到抖音详情页并等待 hydration 完成。
@@ -595,23 +483,6 @@ async function navigateNotePage(
 
   console.log(`[live-page] 页面完全就绪，总耗时 ${Date.now() - startTime}ms`);
   return true;
-}
-
-/**
- * 关闭实况探测 page 并释放 puppeteer 并发许可。
- * 注意：只关闭本次探测使用的 page，不关闭常驻共享浏览器（复用池）。
- * 与 openNoteBrowser 内的 acquire 配对，由调用方 finally 调用，
- * 避免信号量许可泄漏导致排队死锁。
- */
-async function closeNoteBrowser(page: import("puppeteer-core").Page | null): Promise<void> {
-  if (page) {
-    try {
-      await page.close();
-    } catch {
-      /* ignore */
-    }
-  }
-  puppeteerSemaphore.release();
 }
 
 /* ------------------------------------------------------------------ */
@@ -873,9 +744,8 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
   logger.warn("live-photo", "单图实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
-  const handle = await openNoteBrowser(awemeId);
-  if (!handle) return null;
-  const { page } = handle;
+  const page = await acquirePage();
+  if (!page) return null;
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];
@@ -921,7 +791,7 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
       }
     }
   } finally {
-    await closeNoteBrowser(page);
+    await releasePage(page);
   }
 
   console.log(`[live-photo] 单图实况探测完成，耗时 ${Date.now() - startTime}ms，结果: 无实况`);
@@ -964,9 +834,8 @@ export async function resolveLivePhotosForSlides(
   logger.warn("live-photo-slides", "混合实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
-  const handle = await openNoteBrowser(awemeId);
-  if (!handle) return [];
-  const { page } = handle;
+  const page = await acquirePage();
+  if (!page) return [];
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];
@@ -1057,7 +926,7 @@ export async function resolveLivePhotosForSlides(
       }
     }
   } finally {
-    await closeNoteBrowser(page);
+    await releasePage(page);
   }
 
   console.log(
