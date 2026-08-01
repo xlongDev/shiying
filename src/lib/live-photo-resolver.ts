@@ -268,10 +268,59 @@ async function extractLivePhotosFromPage(
   return result as ResolvedLivePhoto[];
 }
 
-async function loadNotePage(
-  awemeId: string,
-  path?: string
-): Promise<import("puppeteer-core").Page | null> {
+/**
+ * 在已加载页面中优先读取 window._ROUTER_DATA（服务端下发的完整 aweme，含全部
+ * images / live_photo 标记 / douyinvod 短片 URL），用 scanLivePhotosInRouterData 扫描
+ * 实况照片。比纯 fiber 遍历更可靠（不受 slides 懒渲染只暴露当前 slide 的影响），
+ * fiber 遍历仅作为最后兜底。page.evaluate 回调会被序列化发往浏览器执行，故逻辑内联。
+ */
+async function extractLivePhotosFromRouterData(
+  page: import("puppeteer-core").Page
+): Promise<ResolvedLivePhoto[]> {
+  const rd = await page.evaluate(() => {
+    const w = window as unknown as Record<string, unknown>;
+    const r = w._ROUTER_DATA;
+    if (r) {
+      try {
+        return JSON.stringify(r);
+      } catch {
+        /* 序列化失败则尝试下方脚本扫描 */
+      }
+    }
+    const scripts = Array.from(document.querySelectorAll("script"));
+    for (const s of scripts) {
+      const txt = s.textContent || "";
+      const idx = txt.indexOf("_ROUTER_DATA");
+      if (idx < 0) continue;
+      const eq = txt.indexOf("=", idx);
+      if (eq < 0) continue;
+      const brace = txt.indexOf("{", eq);
+      if (brace < 0) continue;
+      let depth = 0;
+      for (let i = brace; i < txt.length; i++) {
+        const ch = txt[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) return txt.slice(brace, i + 1);
+        }
+      }
+    }
+    return null;
+  });
+  if (!rd) return [];
+  return scanLivePhotosInRouterData(rd);
+}
+
+/**
+ * 启动一次无头浏览器会话（供实况探测在同一次会话内重试复用，
+ * 避免每次"探测为空"都重启一台全新 Chrome 白白烧 6s+）。
+ * 获取并发许可；无系统 Chrome / puppeteer 未安装时返回 null。
+ */
+async function openNoteBrowser(_awemeId: string): Promise<{
+  browser: import("puppeteer-core").Browser;
+  page: import("puppeteer-core").Page;
+} | null> {
   const chromePath = await findChromeExecutable();
   if (!chromePath) {
     logger.warn("live-photo", "未找到系统 Chrome，跳过实况探测");
@@ -286,13 +335,10 @@ async function loadNotePage(
     return null;
   }
 
-  // 限制并发拉起的 Chrome 实例数，避免 serverless 受限内存下同时多实例 OOM
+  // 限制并发拉起的 Chrome 实例数，避免本地内存压力下多实例 OOM
   await puppeteerSemaphore.acquire();
-
-  let browser: import("puppeteer-core").Browser | null = null;
   try {
-    const startTime = Date.now();
-    browser = await puppeteer.launch({
+    const browser = await puppeteer.launch({
       headless: true,
       executablePath: chromePath,
       args: [
@@ -303,7 +349,6 @@ async function loadNotePage(
         "--no-zygote",
         "--disable-gpu",
         "--disable-blink-features=AutomationControlled",
-        // 速度优化：禁用不必要的功能
         "--disable-extensions",
         "--disable-background-networking",
         "--disable-default-apps",
@@ -316,150 +361,140 @@ async function loadNotePage(
     const page = await browser.newPage();
     await page.setUserAgent(DESKTOP_UA);
     await page.setViewport({ width: 1280, height: 800 });
-
-    // 速度优化：启用缓存，减少资源重复加载
     await page.setCacheEnabled(true);
-
-    // 导航可能在数据中心 IP / 反爬挑战页 / SPA 客户端重定向下抛 net::ERR_ABORTED 或超时，
-    // 这不代表页面无内容，但本兜底路径依赖 douyin.com 桌面端 React 注水后的 fiber 数据，
-    // 导航一旦失败即拿不到实况，无需继续等待 hydration。单独捕获并降级为 warn（避免把
-    // 预期内的兜底失败当成 error 污染日志），直接释放浏览器与并发许可、返回 null，
-    // 交由调用方按"无实况"处理（SSR 主路径已先行尝试）。
-    let gotoOk = true;
-    try {
-      await page.goto(`https://www.douyin.com${path ?? `/note/${awemeId}`}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 12000,
-      });
-    } catch (gotoErr) {
-      gotoOk = false;
-      logger.warn(
-        "live-photo",
-        "页面导航未完成，放弃浏览器兜底:",
-        (gotoErr as Error)?.message ?? gotoErr
-      );
-    }
-
-    if (!gotoOk) {
-      try {
-        if (browser) await browser.close();
-      } catch {
-        /* ignore */
-      }
-      puppeteerSemaphore.release();
-      return null;
-    }
-
-    console.log(`[live-page] 页面 DOM 加载完成 (${Date.now() - startTime}ms)`);
-
-    // 等待 hydration：页面出现图片查看器或视频即代表数据已挂载
-    try {
-      await page.waitForFunction(
-        () =>
-          !!document.querySelector(".dySwiperSlide") ||
-          !!document.querySelector(".note-detail-container") ||
-          !!document.querySelector("video"),
-        { timeout: 5000 }
-      );
-    } catch {
-      // 超时也继续，下面仍有固定等待兜底
-    }
-    console.log(`[live-page] hydration 检测完成 (${Date.now() - startTime}ms)`);
-
-    // 短暂等待 React 完成渲染与数据注入（fiber 轮询会进一步兜底）
-    await new Promise((r) => setTimeout(r, 500));
-
-    // 轮询等待 fiber 树中确实出现含 clipType/livePhotoType 的图片数组
-    // （避免页面未完全 hydration 就遍历导致探测偶发返回空）
-    try {
-      await page.waitForFunction(
-        () => {
-          const seed =
-            document.querySelector(".dySwiperSlide") ||
-            document.querySelector(".note-detail-container") ||
-            document.querySelector("video") ||
-            document.body;
-          const key = Object.keys(seed).find((k) => k.startsWith("__reactFiber"));
-          if (!key) return false;
-          const visited = new Set<unknown>();
-          const stack: unknown[] = [(seed as unknown as Record<string, unknown>)[key]];
-          let n = 0;
-          while (stack.length && n < 30000) {
-            // 降低单次遍历上限
-            const f = stack.pop() as Record<string, unknown> | undefined;
-            n++;
-            if (!f || typeof f !== "object" || visited.has(f)) continue;
-            visited.add(f);
-            const props = f.memoizedProps;
-            if (props && typeof props === "object") {
-              let found = false;
-              const walk = (o: unknown) => {
-                if (found || !o || typeof o !== "object") return;
-                if (Array.isArray(o)) {
-                  if (
-                    o.length > 0 &&
-                    (o as unknown[]).every(
-                      (x) =>
-                        x &&
-                        typeof x === "object" &&
-                        ("clipType" in (x as Record<string, unknown>) ||
-                          "livePhotoType" in (x as Record<string, unknown>) ||
-                          "url_list" in (x as Record<string, unknown>) ||
-                          "urlList" in (x as Record<string, unknown>) ||
-                          "live_photo" in (x as Record<string, unknown>) ||
-                          "livePhoto" in (x as Record<string, unknown>))
-                    )
-                  ) {
-                    found = true;
-                    return;
-                  }
-                  o.forEach(walk);
-                  return;
-                }
-                for (const k of Object.keys(o)) {
-                  if (k.startsWith("__react")) continue;
-                  walk((o as Record<string, unknown>)[k]);
-                }
-              };
-              walk(props);
-              if (found) return true;
-            }
-            if (f.child) stack.push(f.child);
-            if (f.sibling) stack.push(f.sibling);
-            if (f.return) stack.push(f.return);
-          }
-          return false;
-        },
-        { timeout: 6000, polling: 800 } // 超时 10s→6s，增加轮询间隔减少 CPU 消耗
-      );
-    } catch {
-      // 超时也继续，下面的遍历仍有兜底
-    }
-
-    console.log(`[live-page] 页面完全就绪，总耗时 ${Date.now() - startTime}ms`);
-
-    return page;
+    return { browser, page };
   } catch (err) {
-    logger.error("live-photo", "加载 note 页面失败:", err);
-    try {
-      if (browser) await browser.close();
-    } catch {
-      /* ignore */
-    }
+    logger.error("live-photo", "启动浏览器失败:", err);
     puppeteerSemaphore.release();
     return null;
   }
 }
 
 /**
- * 关闭实况探测页面并释放 puppeteer 并发许可。
- * 与 loadNotePage 内的 acquire 配对；loadNotePage 自身失败路径也会释放，
- * 此处仅在成功拿到 page 后由调用方 finally 调用，避免信号量许可泄漏导致排队死锁。
+ * 在已打开的页面上导航到抖音详情页并等待 hydration 完成。
+ * 导航可能在数据中心 IP / 反爬挑战页 / SPA 客户端重定向下抛异常，这不代表页面无内容，
+ * 但本兜底依赖 douyin.com 桌面端 React 注水后的数据，导航一旦失败即拿不到实况，
+ * 返回 false 交由调用方按"无实况"处理。
  */
-async function closeNotePage(page: import("puppeteer-core").Page | null): Promise<void> {
-  if (!page) return;
+async function navigateNotePage(
+  page: import("puppeteer-core").Page,
+  path: string,
+  startTime: number
+): Promise<boolean> {
+  let gotoOk = true;
   try {
-    await page.browser().close();
+    await page.goto(`https://www.douyin.com${path}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 12000,
+    });
+  } catch (gotoErr) {
+    gotoOk = false;
+    logger.warn(
+      "live-photo",
+      "页面导航未完成，放弃浏览器兜底:",
+      (gotoErr as Error)?.message ?? gotoErr
+    );
+  }
+  if (!gotoOk) return false;
+
+  console.log(`[live-page] 页面 DOM 加载完成 (${Date.now() - startTime}ms)`);
+
+  // 等待 hydration：页面出现图片查看器或视频即代表数据已挂载
+  try {
+    await page.waitForFunction(
+      () =>
+        !!document.querySelector(".dySwiperSlide") ||
+        !!document.querySelector(".note-detail-container") ||
+        !!document.querySelector("video"),
+      { timeout: 5000 }
+    );
+  } catch {
+    // 超时也继续，下面仍有固定等待兜底
+  }
+  console.log(`[live-page] hydration 检测完成 (${Date.now() - startTime}ms)`);
+
+  // 短暂等待 React 完成渲染与数据注入
+  await new Promise((r) => setTimeout(r, 500));
+
+  // 轮询等待 fiber 树中确实出现含 clipType/livePhotoType 的图片数组
+  // （避免页面未完全 hydration 就遍历导致探测偶发返回空）
+  try {
+    await page.waitForFunction(
+      () => {
+        const seed =
+          document.querySelector(".dySwiperSlide") ||
+          document.querySelector(".note-detail-container") ||
+          document.querySelector("video") ||
+          document.body;
+        const key = Object.keys(seed).find((k) => k.startsWith("__reactFiber"));
+        if (!key) return false;
+        const visited = new Set<unknown>();
+        const stack: unknown[] = [(seed as unknown as Record<string, unknown>)[key]];
+        let n = 0;
+        while (stack.length && n < 30000) {
+          const f = stack.pop() as Record<string, unknown> | undefined;
+          n++;
+          if (!f || typeof f !== "object" || visited.has(f)) continue;
+          visited.add(f);
+          const props = f.memoizedProps;
+          if (props && typeof props === "object") {
+            let found = false;
+            const walk = (o: unknown) => {
+              if (found || !o || typeof o !== "object") return;
+              if (Array.isArray(o)) {
+                if (
+                  o.length > 0 &&
+                  (o as unknown[]).every(
+                    (x) =>
+                      x &&
+                      typeof x === "object" &&
+                      ("clipType" in (x as Record<string, unknown>) ||
+                        "livePhotoType" in (x as Record<string, unknown>) ||
+                        "url_list" in (x as Record<string, unknown>) ||
+                        "urlList" in (x as Record<string, unknown>) ||
+                        "live_photo" in (x as Record<string, unknown>) ||
+                        "livePhoto" in (x as Record<string, unknown>))
+                  )
+                ) {
+                  found = true;
+                  return;
+                }
+                o.forEach(walk);
+                return;
+              }
+              for (const k of Object.keys(o)) {
+                if (k.startsWith("__react")) continue;
+                walk((o as Record<string, unknown>)[k]);
+              }
+            };
+            walk(props);
+            if (found) return true;
+          }
+          if (f.child) stack.push(f.child);
+          if (f.sibling) stack.push(f.sibling);
+          if (f.return) stack.push(f.return);
+        }
+        return false;
+      },
+      { timeout: 6000, polling: 800 }
+    );
+  } catch {
+    // 超时也继续，下面的遍历仍有兜底
+  }
+
+  console.log(`[live-page] 页面完全就绪，总耗时 ${Date.now() - startTime}ms`);
+  return true;
+}
+
+/**
+ * 关闭实况探测浏览器会话并释放 puppeteer 并发许可。
+ * 与 openNoteBrowser 内的 acquire 配对，由调用方 finally 调用，
+ * 避免信号量许可泄漏导致排队死锁。
+ */
+async function closeNoteBrowser(browser: import("puppeteer-core").Browser | null): Promise<void> {
+  if (!browser) return;
+  try {
+    await browser.close();
   } catch {
     /* ignore */
   } finally {
@@ -726,15 +761,21 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
   logger.warn("live-photo", "单图实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
+  const handle = await openNoteBrowser(awemeId);
+  if (!handle) return null;
+  const { browser, page } = handle;
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const page = await loadNotePage(awemeId);
-    if (!page) return null;
-    try {
-      const lives = await extractLivePhotosFromPage(page);
+  try {
+    const ok = await navigateNotePage(page, `/note/${awemeId}`, startTime);
+    if (!ok) return null;
+    // 同一次浏览器会话内循环重提取，避免每次"为空"都重启 Chrome 烧 6s+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      // P0：优先读 window._ROUTER_DATA（完整 aweme，不受 slides 懒渲染影响），fiber 仅兜底
+      let lives = await extractLivePhotosFromRouterData(page);
+      if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
       if (lives.length > 0) {
         console.log(
           `[live-photo] 单图实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，结果: 有实况`
@@ -742,12 +783,13 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
         return lives[0].videoUrl;
       }
       lastResult = lives;
-    } catch (err) {
-      logger.error("live-photo", `第${attempt}次提取实况视频失败:`, err);
-    } finally {
-      await closeNotePage(page);
+      if (attempt < MAX_RETRIES) {
+        logger.warn("live-photo", `第${attempt}次单图实况探测为空，重试...`);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
-    logger.warn("live-photo", `第${attempt}次单图实况探测为空，重试...`);
+  } finally {
+    await closeNoteBrowser(browser);
   }
 
   console.log(`[live-photo] 单图实况探测完成，耗时 ${Date.now() - startTime}ms，结果: 无实况`);
@@ -790,6 +832,9 @@ export async function resolveLivePhotosForSlides(
   logger.warn("live-photo-slides", "混合实况 SSR 未命中，回退无头浏览器");
 
   // 回退路径：无头浏览器（仅本地有系统 Chrome 时可用，Vercel 自动跳过）
+  const handle = await openNoteBrowser(awemeId);
+  if (!handle) return [];
+  const { browser, page } = handle;
   const startTime = Date.now();
   const MAX_RETRIES = 3;
   let lastResult: ResolvedLivePhoto[] = [];
@@ -798,12 +843,15 @@ export async function resolveLivePhotosForSlides(
   // 仅于 /slides/{id} 完整渲染实况。依次尝试两条路径，命中即返回。
   const paths = [`/note/${awemeId}`, `/slides/${awemeId}`];
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const page = await loadNotePage(awemeId, paths[0]);
-    if (!page) return [];
-    try {
-      let lives = await extractLivePhotosFromPage(page);
-      // 首条路径未命中实况时，尝试备用路径（同一浏览器会话内导航，避免重复启动开销）
+  try {
+    const ok = await navigateNotePage(page, paths[0], startTime);
+    if (!ok) return [];
+    // 同一次浏览器会话内循环重提取，避免每次"为空"都重启 Chrome 烧 6s+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      // P0：优先读 window._ROUTER_DATA（完整 aweme，不受 slides 懒渲染影响），fiber 仅兜底
+      let lives = await extractLivePhotosFromRouterData(page);
+      if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
+      // 首条路径未命中实况时，尝试备用路径（同一浏览器会话内导航）
       for (let p = 1; p < paths.length && lives.length === 0; p++) {
         try {
           await page.goto(`https://www.douyin.com${paths[p]}`, {
@@ -820,7 +868,8 @@ export async function resolveLivePhotosForSlides(
               { timeout: 5000 }
             )
             .catch(() => {});
-          lives = await extractLivePhotosFromPage(page);
+          lives = await extractLivePhotosFromRouterData(page);
+          if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
         } catch {
           /* 备用路径失败，继续 */
         }
@@ -832,12 +881,13 @@ export async function resolveLivePhotosForSlides(
         return lives;
       }
       lastResult = lives;
-    } catch (err) {
-      logger.error("live-photo", `第${attempt}次混合实况探测失败:`, err);
-    } finally {
-      await closeNotePage(page);
+      if (attempt < MAX_RETRIES) {
+        logger.warn("live-photo-slides", `第${attempt}次混合实况探测为空，重试...`);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
-    logger.warn("live-photo-slides", `第${attempt}次混合实况探测为空，重试...`);
+  } finally {
+    await closeNoteBrowser(browser);
   }
 
   console.log(

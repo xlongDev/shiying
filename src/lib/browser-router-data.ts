@@ -22,7 +22,7 @@ import { findItemInRouterData } from "./parser/extract";
 const DESKTOP_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// 与 live-photo-resolver.loadNotePage 同源的启动参数，保证本地无头浏览器稳定拉起
+// 与 live-photo-resolver.openNoteBrowser 同源的启动参数，保证本地无头浏览器稳定拉起
 const CHROME_LAUNCH_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
@@ -41,7 +41,7 @@ const CHROME_LAUNCH_ARGS = [
 
 /**
  * 等待抖音桌面页完成 hydration：出现图片查看器、note 容器或 video 即代表数据已挂载。
- * 与 live-photo-resolver 的 loadNotePage 保持一致，该逻辑已在本地验证可拿到实况数据。
+ * 与 live-photo-resolver 的 openNoteBrowser / navigateNotePage 保持一致，该逻辑已在本地验证可拿到实况数据。
  */
 async function waitForHydration(
   page: import("puppeteer-core").Page,
