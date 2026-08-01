@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseVideo, ParseError } from "@/lib/parser";
+import { detectLivePhotoPresence } from "@/lib/live-photo-resolver";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 
@@ -42,19 +43,40 @@ export async function POST(req: NextRequest) {
 
     // 跳过实况解析（skipLivePhoto=true）且 SSR 未直接拿到实况资源时，决定是否异步探测。
     // - slides（混合图文）：确定性可能含实况 → 骨架屏 pending + 「探测未完成」重试面板
-    // - note（含单图/多图）：全部走静默后台探测（livePhotoBackground），仅找到实况时才展示实况 UI，
-    //   探测失败/无实则静默降级为普通图文，不展示「探测未完成」面板。
-    //
-    // 深链（modal_id / aweme_id / item_ids）历史上曾被误判为普通 video 导致实况漏探，
-    // 但现在浏览器兜底已能稳定拿到 item，且「单图静态图文」大量存在，若对深链单图强制 pending
-    // 会严重误报（用户反馈"全部都是静态图片的视频就不需要解析实况了"）。
-    // 因此对 note 类型统一静默探测；只有 slides 保持可见 pending。
+    // - note（含单图/多图）：先做一次轻量纯 API 预检（国内服务 / SSR 分享页），判定：
+    //     * live：检测到实况 → 单图直接填充实况资源；否则显示 pending 由前端二次探测
+    //     * static：SSR 明确无实况标记 → 不探测、不提示，避免对真静态帖误报
+    //     * uncertain：API 无法判定 → 走静默后台探测（livePhotoBackground），由浏览器兜底
+    //   这样单图实况在 API 可识别时会给用户反馈，真静态帖又不会白烧浏览器。
 
     if (skipLivePhoto && !result.isLivePhoto && result.isImagePost) {
       if (result.contentType === "slides") {
         result.livePhotoPending = true;
       } else if (result.contentType === "note") {
-        result.livePhotoBackground = true;
+        try {
+          const presence = await detectLivePhotoPresence(result.awemeId);
+          if (presence.status === "live") {
+            // 单图实况：API 已返回完整资源，直接展示实况 UI，无需二次探测
+            if (presence.lives.length === 1 && result.images?.length === 1) {
+              result.isLivePhoto = true;
+              result.livePhoto = {
+                imageUrl: presence.lives[0].imageUrl || result.images[0],
+                videoUrl: presence.lives[0].videoUrl,
+                musicUrl: result.musicUrl || "",
+              };
+            } else {
+              // 多实况或资源不齐：显示「正在探测实况」骨架屏
+              result.livePhotoPending = true;
+            }
+          } else if (presence.status === "uncertain") {
+            // API 无法判定，走静默浏览器兜底
+            result.livePhotoBackground = true;
+          }
+          // status === "static"：API 已确认无实况，不探测、不提示
+        } catch (err) {
+          logger.warn("parse", "实况预检失败，回退静默探测:", err);
+          result.livePhotoBackground = true;
+        }
       }
     }
 

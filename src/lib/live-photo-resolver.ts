@@ -1008,3 +1008,100 @@ export async function resolveLivePhotosForSlides(
   );
   return lastResult;
 }
+
+/* ------------------------------------------------------------------ */
+/* 轻量预检：纯 API 判断 aweme 是否存在实况照片                       */
+/* ------------------------------------------------------------------ */
+
+export type LivePhotoPresence =
+  | { status: "live"; lives: ResolvedLivePhoto[] }
+  | { status: "static"; reason: string }
+  | { status: "uncertain"; reason: string };
+
+/**
+ * 轻量预检：在不启动无头浏览器的前提下，快速判断 aweme 是否含实况照片。
+ *
+ * 路径（按优先级）：
+ *   1) 国内实况服务（LIVE_PHOTO_SERVICE_URL）—— 零浏览器，可覆盖 slides/单图；
+ *   2) iesdouyin 分享页 SSR（window._ROUTER_DATA）—— 移动端 UA，无需签名；
+ *
+ * 返回状态：
+ *   - live：检测到实况照片，并附带 ResolvedLivePhoto 资源；
+ *   - static：SSR 返回了完整 item 且 images 数组中无任何实况标记，可判定为纯静态帖；
+ *   - uncertain：SSR 被 WAF/无 _ROUTER_DATA/数据不完整，无法纯 API 判定。
+ *
+ * 注意：本函数故意不走无头浏览器兜底。uncertain 状态应交由调用方决定是否启动
+ * 浏览器兜底探测，避免在预检阶段就白烧 Chrome 启动时间。
+ */
+export async function detectLivePhotoPresence(awemeId: string): Promise<LivePhotoPresence> {
+  // 1. 国内服务（零浏览器，配置即最高优）
+  try {
+    const svcLives = await resolveLivePhotosViaService(awemeId);
+    if (svcLives.length > 0) {
+      return { status: "live", lives: svcLives };
+    }
+  } catch (err) {
+    logger.warn("live-photo-presence", "国内服务预检失败:", err);
+  }
+
+  // 2. SSR 分享页（无需签名）
+  const candidates = [
+    `https://www.iesdouyin.com/share/note/${awemeId}/`,
+    `https://www.iesdouyin.com/share/video/${awemeId}/`,
+  ];
+
+  for (const shareUrl of candidates) {
+    try {
+      const res = await fetch(shareUrl, {
+        headers: {
+          "user-agent": MOBILE_UA,
+          referer: "https://www.douyin.com/",
+          accept: "text/html",
+        },
+      });
+      if (!res.ok) continue;
+
+      const html = await res.text();
+      const htmlHead = html.slice(0, 6000).toLowerCase();
+      if (
+        htmlHead.includes("waf_js") ||
+        htmlHead.includes("wafchallengeid") ||
+        htmlHead.includes("argus-csp-token") ||
+        htmlHead.includes("/waf-jschallenge/")
+      ) {
+        logger.warn("live-photo-presence", `SSR 预检被 WAF ${shareUrl}`);
+        continue;
+      }
+
+      const rd = extractRouterData(html);
+      if (!rd) continue;
+      const item = findItemInRouterData(rd);
+      if (!item) continue;
+
+      const lives = scanLivePhotosInItem(item, rd);
+      if (lives.length > 0) {
+        return { status: "live", lives };
+      }
+
+      // SSR 拿到完整 item 且 images 数组存在：逐张检查实况标记
+      const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
+      if (images.length > 0) {
+        const hasLiveMarker = images.some(
+          (img) => img && typeof img === "object" && isLiveImageApi(img as Record<string, unknown>)
+        );
+        const imageInfo = (item.image_info ?? {}) as Record<string, unknown>;
+        const topLive = imageInfo.live_photo === true || typeof imageInfo.live_photo === "object";
+        if (!hasLiveMarker && !topLive) {
+          return {
+            status: "static",
+            reason: "SSR item has complete images without live markers",
+          };
+        }
+      }
+    } catch (err) {
+      logger.warn("live-photo-presence", `SSR 预检失败 ${shareUrl}:`, err);
+    }
+  }
+
+  return { status: "uncertain", reason: "API/SSR precheck inconclusive" };
+}

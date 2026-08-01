@@ -3,6 +3,7 @@ import {
   resolveLivePhotoVideoUrl,
   scanLivePhotosInRouterData,
   extractRouterData,
+  detectLivePhotoPresence,
 } from "./live-photo-resolver";
 
 // 桩掉 chrome-finder，避免测试环境（无系统 Chrome）走无头浏览器回退时
@@ -176,5 +177,74 @@ describe("resolveLivePhotoVideoUrl (SSR path)", () => {
 
     const url = await resolveLivePhotoVideoUrl("123");
     expect(url).toBeNull();
+  });
+});
+
+describe("detectLivePhotoPresence (轻量 API 预检)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubEnv("LIVE_PHOTO_SERVICE_URL", "");
+  });
+
+  it("SSR 含 live_photo 标记时返回 live", async () => {
+    const html = buildSsrHtml({
+      images: [
+        {
+          url_list: ["https://p1.douyinpic.com/abc.jpg"],
+          live_photo: true,
+          video: {
+            bitRateList: [{ playAddr: [{ src: "https://v3-dy-z.douyinvod.com/short/xyz.mp4" }] }],
+          },
+        },
+      ],
+    });
+    mockSharePage(html);
+
+    const presence = await detectLivePhotoPresence("123");
+    expect(presence.status).toBe("live");
+    if (presence.status === "live") {
+      expect(presence.lives).toHaveLength(1);
+      expect(presence.lives[0].videoUrl).toContain("douyinvod");
+    }
+  });
+
+  it("SSR 返回完整 images 但无实况标记时返回 static", async () => {
+    const html = buildSsrHtml({
+      images: [
+        { url_list: ["https://p1.douyinpic.com/static1.jpg"] },
+        { url_list: ["https://p1.douyinpic.com/static2.jpg"] },
+      ],
+    });
+    mockSharePage(html);
+
+    const presence = await detectLivePhotoPresence("456");
+    expect(presence.status).toBe("static");
+  });
+
+  it("SSR 被 WAF 时返回 uncertain", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(`<html><script>var waf_jschallenge={};</script></html>`, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      })
+    );
+
+    const presence = await detectLivePhotoPresence("789");
+    expect(presence.status).toBe("uncertain");
+  });
+
+  it("SSR 返回 404 时返回 uncertain", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response("not found", { status: 404 });
+      })
+    );
+
+    const presence = await detectLivePhotoPresence("000");
+    expect(presence.status).toBe("uncertain");
   });
 });
