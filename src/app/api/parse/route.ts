@@ -45,9 +45,9 @@ export async function POST(req: NextRequest) {
     // - slides（混合图文）：确定性可能含实况 → 骨架屏 pending + 「探测未完成」重试面板
     // - note（含单图/多图）：先做一次轻量纯 API 预检（国内服务 / SSR 分享页），判定：
     //     * live：检测到实况 → 单图直接填充实况资源；否则显示 pending 由前端二次探测
-    //     * static：SSR 明确无实况标记 → 不探测、不提示，避免对真静态帖误报
-    //     * uncertain：API 无法判定 → 走静默后台探测（livePhotoBackground），由浏览器兜底
-    //   这样单图实况在 API 可识别时会给用户反馈，真静态帖又不会白烧浏览器。
+    //     * uncertain：API 无法判定（或 SSR 未暴露实况标记）→ 走静默后台探测
+    //       （livePhotoBackground），由浏览器兜底。注意：预检不再返回 static，因为
+    //       抖音 SSR 对单图实况常常不暴露 live_photo/clipType 等标记，若判 static 会漏检。
 
     if (skipLivePhoto && !result.isLivePhoto && result.isImagePost) {
       if (result.contentType === "slides") {
@@ -68,11 +68,10 @@ export async function POST(req: NextRequest) {
               // 多实况或资源不齐：显示「正在探测实况」骨架屏
               result.livePhotoPending = true;
             }
-          } else if (presence.status === "uncertain") {
-            // API 无法判定，走静默浏览器兜底
+          } else {
+            // uncertain：API 无法判定（或 SSR 未暴露实况标记），走静默浏览器兜底
             result.livePhotoBackground = true;
           }
-          // status === "static"：API 已确认无实况，不探测、不提示
         } catch (err) {
           logger.warn("parse", "实况预检失败，回退静默探测:", err);
           result.livePhotoBackground = true;

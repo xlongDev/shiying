@@ -208,7 +208,7 @@ describe("detectLivePhotoPresence (轻量 API 预检)", () => {
     }
   });
 
-  it("SSR 返回完整 images 但无实况标记时返回 static", async () => {
+  it("SSR 返回完整 images 但无实况标记时返回 uncertain（避免漏检单图实况）", async () => {
     const html = buildSsrHtml({
       images: [
         { url_list: ["https://p1.douyinpic.com/static1.jpg"] },
@@ -218,7 +218,7 @@ describe("detectLivePhotoPresence (轻量 API 预检)", () => {
     mockSharePage(html);
 
     const presence = await detectLivePhotoPresence("456");
-    expect(presence.status).toBe("static");
+    expect(presence.status).toBe("uncertain");
   });
 
   it("SSR 被 WAF 时返回 uncertain", async () => {

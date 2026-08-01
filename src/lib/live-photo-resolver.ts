@@ -1014,9 +1014,7 @@ export async function resolveLivePhotosForSlides(
 /* ------------------------------------------------------------------ */
 
 export type LivePhotoPresence =
-  | { status: "live"; lives: ResolvedLivePhoto[] }
-  | { status: "static"; reason: string }
-  | { status: "uncertain"; reason: string };
+  { status: "live"; lives: ResolvedLivePhoto[] } | { status: "uncertain"; reason: string };
 
 /**
  * 轻量预检：在不启动无头浏览器的前提下，快速判断 aweme 是否含实况照片。
@@ -1027,8 +1025,12 @@ export type LivePhotoPresence =
  *
  * 返回状态：
  *   - live：检测到实况照片，并附带 ResolvedLivePhoto 资源；
- *   - static：SSR 返回了完整 item 且 images 数组中无任何实况标记，可判定为纯静态帖；
- *   - uncertain：SSR 被 WAF/无 _ROUTER_DATA/数据不完整，无法纯 API 判定。
+ *   - uncertain：SSR 未返回实况标记 / 被 WAF / 无 _ROUTER_DATA / 数据不完整。
+ *
+ * 重要：不再返回 "static"。抖音 SSR 分享页的 _ROUTER_DATA 对单图实况常常不暴露
+ * live_photo / clipType / livePhotoType 等标记（图片对象只有 uri/url_list/宽高），
+ * 若把"无标记"判定为 static 会严重漏检单图实况。因此只要没看到明确实况标记，
+ * 一律返回 uncertain，交由调用方决定是否启动浏览器兜底。
  *
  * 注意：本函数故意不走无头浏览器兜底。uncertain 状态应交由调用方决定是否启动
  * 浏览器兜底探测，避免在预检阶段就白烧 Chrome 启动时间。
@@ -1083,21 +1085,10 @@ export async function detectLivePhotoPresence(awemeId: string): Promise<LivePhot
         return { status: "live", lives };
       }
 
-      // SSR 拿到完整 item 且 images 数组存在：逐张检查实况标记
-      const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
-      if (images.length > 0) {
-        const hasLiveMarker = images.some(
-          (img) => img && typeof img === "object" && isLiveImageApi(img as Record<string, unknown>)
-        );
-        const imageInfo = (item.image_info ?? {}) as Record<string, unknown>;
-        const topLive = imageInfo.live_photo === true || typeof imageInfo.live_photo === "object";
-        if (!hasLiveMarker && !topLive) {
-          return {
-            status: "static",
-            reason: "SSR item has complete images without live markers",
-          };
-        }
-      }
+      // 注意：这里不再把"SSR 拿到完整 images 但无实况标记"判定为 static。
+      // 抖音 SSR 对单图实况的图片对象常常不暴露 live_photo/clipType 等标记，
+      // 仅含 uri/url_list/宽高；此时若判 static 会漏检单图实况。
+      // 没看到明确实况标记 → 返回 uncertain，由浏览器兜底保证正确性。
     } catch (err) {
       logger.warn("live-photo-presence", `SSR 预检失败 ${shareUrl}:`, err);
     }
