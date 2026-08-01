@@ -11,6 +11,12 @@ import {
   ParseError,
 } from "./parser";
 
+// 桩掉浏览器兜底，避免测试环境（无系统 Chrome）走无头浏览器回退时
+// spawnSync(which chrome) 卡住。SSR 路径的回归验证不依赖浏览器。
+vi.mock("./browser-router-data", () => ({
+  loadRouterDataViaBrowser: vi.fn(async () => null),
+}));
+
 /* ------------------------------------------------------------------ */
 /* Pure helper functions                                              */
 /* ------------------------------------------------------------------ */

@@ -4,13 +4,14 @@
  * 提供多源 fallback，以应对抖音对单一来源的反爬/封锁：
  *   1) SSR 分享页（iesdouyin.com/share/{note|video}/{id}/）—— 无需签名，但可能被 WAF；
  *   2) a_bogus 签名 API（www.douyin.com/aweme/v1/web/aweme/detail/）—— 需国内 IP；
- *   3) 桌面版无头浏览器（本地有 Chrome 时）—— 通用兜底，但慢且 Vercel 不可用。
+ *   3) 桌面版无头浏览器（本地有 Chrome 时）—— 通用兜底，绕过 WAF/地理封锁，但慢且 Vercel 不可用。
  *
  * note.ts / slides.ts / live-photo-resolver.ts / download-music.ts 统一从这里取 item，
  * 避免各模块重复实现不一致的提取/兜底逻辑。
  */
 
 import { signAwemeDetail } from "@/lib/abogus";
+import { loadRouterDataViaBrowser } from "../browser-router-data";
 import { logger } from "@/lib/logger";
 import { MOBILE_UA, extractRouterData, findItemInRouterData } from "./extract";
 
@@ -119,6 +120,11 @@ export async function fetchAwemeItem(awemeId: string): Promise<Record<string, un
   logger.warn("aweme-detail", "SSR 未命中，回退 a_bogus 签名 API");
   const apiItem = await fetchAwemeItemFromApi(awemeId);
   if (apiItem) return apiItem;
+
+  // 路径 3：无头浏览器（本地有 Chrome 时）—— 绕过 WAF / 地理封锁的通用兜底
+  logger.warn("aweme-detail", "SSR + a_bogus 均未命中，回退无头浏览器");
+  const browserItem = await loadRouterDataViaBrowser(awemeId);
+  if (browserItem) return browserItem;
 
   return null;
 }
