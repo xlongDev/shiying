@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ParsedVideo } from "@/lib/parser";
 import {
@@ -263,20 +262,8 @@ export function LivePhotoPanel({
       className="w-full"
     >
       <AnimatePresence mode="wait" initial={false}>
-        {/* 探测中：可见的实况扫描态 */}
+        {/* 探测中：可见的实况扫描态（仅 slides 的 livePhotoPending 使用） */}
         {isLivePhotoPending && <LivePhotoDetecting />}
-
-        {/* 静默后台探测（多图 note）：不展示骨架屏/失败面板，仅一行轻量提示 */}
-        {!isLivePhotoPending &&
-          !isMixedLivePhoto &&
-          !isLivePhoto &&
-          !video.livePhotoFailed &&
-          video.livePhotoBackground && (
-            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70 px-1 py-0.5">
-              <Loader2 className="h-3 w-3 animate-spin text-purple-400" />
-              正在智能探测实况照片…
-            </div>
-          )}
 
         {/* 实况探测失败 — 提供重试入口 */}
         {!isLivePhotoPending &&
