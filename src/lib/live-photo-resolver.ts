@@ -50,9 +50,23 @@ export interface ResolvedLivePhoto {
  * 注意：page.evaluate 的回调会被序列化后发往浏览器执行，无法引用本模块作用域的
  * 函数，因此所有辅助函数都内联在回调内部。
  */
-async function extractLivePhotosFromPage(
+type PagePhotoStats = {
+  /** 是否从 fiber 中找到了图片数组（含静态+实况） */
+  hasImageArray: boolean;
+  /** 找到的最大图片数组长度 */
+  maxImageArrayLength: number;
+  /** 最大数组中的实况数量 */
+  liveCountInMaxArray: number;
+};
+
+type PageExtractResult = {
+  lives: ResolvedLivePhoto[];
+  stats: PagePhotoStats;
+};
+
+async function extractPhotosFromPage(
   page: import("puppeteer-core").Page
-): Promise<ResolvedLivePhoto[]> {
+): Promise<PageExtractResult> {
   const result = await page.evaluate(() => {
     function isLiveImage(im: Record<string, unknown>): boolean {
       // 兼容多种实况判定字段（不同时期/端命名不同）
@@ -173,10 +187,29 @@ async function extractLivePhotosFromPage(
     if (!start) return [];
 
     const visited = new Set<unknown>();
-    const candidates: Record<string, unknown>[][] = [];
+    const imageArrays: Record<string, unknown>[][] = [];
     // 候选数上限：仅用于限制内存，达到上限后不再追加新候选，
     // 但继续遍历以保留已收集候选中可能最优的一项
     const MAX_CANDIDATES = 100;
+
+    function isImageLikeArray(obj: unknown[]): boolean {
+      return (
+        obj.length > 0 &&
+        obj.every(
+          (x) =>
+            x &&
+            typeof x === "object" &&
+            !("children" in (x as Record<string, unknown>)) &&
+            ("clipType" in (x as Record<string, unknown>) ||
+              "livePhotoType" in (x as Record<string, unknown>) ||
+              "urlList" in (x as Record<string, unknown>) ||
+              "url_list" in (x as Record<string, unknown>) ||
+              "live_photo" in (x as Record<string, unknown>) ||
+              "livePhoto" in (x as Record<string, unknown>) ||
+              "isLivePhoto" in (x as Record<string, unknown>))
+        )
+      );
+    }
 
     function scanObj(obj: unknown) {
       if (!obj || typeof obj !== "object" || visited.has(obj)) return;
@@ -185,30 +218,9 @@ async function extractLivePhotosFromPage(
       if ((visited as Set<unknown>).size > 1000000) return;
 
       if (Array.isArray(obj)) {
-        const isImageLike =
-          obj.length > 0 &&
-          (obj as unknown[]).every(
-            (x) =>
-              x &&
-              typeof x === "object" &&
-              !("children" in (x as Record<string, unknown>)) &&
-              ("clipType" in (x as Record<string, unknown>) ||
-                "livePhotoType" in (x as Record<string, unknown>) ||
-                "urlList" in (x as Record<string, unknown>) ||
-                "url_list" in (x as Record<string, unknown>) ||
-                "live_photo" in (x as Record<string, unknown>) ||
-                "livePhoto" in (x as Record<string, unknown>) ||
-                "isLivePhoto" in (x as Record<string, unknown>))
-          );
-        if (isImageLike) {
-          // 快速计算该数组中的实况数量
-          const liveInArr = (obj as unknown[]).filter((x) =>
-            isLiveImage(x as Record<string, unknown>)
-          ).length;
-          if (liveInArr > 0) {
-            if (candidates.length < MAX_CANDIDATES) {
-              candidates.push(obj as Record<string, unknown>[]);
-            }
+        if (isImageLikeArray(obj as unknown[])) {
+          if (imageArrays.length < MAX_CANDIDATES) {
+            imageArrays.push(obj as Record<string, unknown>[]);
           }
         }
         obj.forEach(scanObj);
@@ -236,36 +248,51 @@ async function extractLivePhotosFromPage(
       if (f.return) stack.push(f.return);
     }
 
-    if (candidates.length === 0) return [];
+    // 统计：找到的所有图片数组（含静态+实况）
+    const stats: PagePhotoStats = {
+      hasImageArray: imageArrays.length > 0,
+      maxImageArrayLength: 0,
+      liveCountInMaxArray: 0,
+    };
+
+    if (imageArrays.length > 0) {
+      // 按长度选最大数组，计算其.live数量
+      const maxArr = imageArrays.reduce((a, b) => (a.length >= b.length ? a : b));
+      stats.maxImageArrayLength = maxArr.length;
+      stats.liveCountInMaxArray = maxArr.filter((x) =>
+        isLiveImage(x as Record<string, unknown>)
+      ).length;
+    }
 
     // 选择「含实况且图片数最多」的数组作为主 images 数组。
     // 混合图文帖里完整的 images 数组同时包含 普通图+实况图，长度最大，
     // 因此按数组长度（而非实况数）挑选最可靠，避免选到局部子集。
     let best: Record<string, unknown>[] | null = null;
     let bestLen = -1;
-    for (const arr of candidates) {
+    for (const arr of imageArrays) {
       const live = arr.filter((x) => isLiveImage(x as Record<string, unknown>)).length;
       if (live > 0 && arr.length > bestLen) {
         bestLen = arr.length;
         best = arr;
       }
     }
-    if (!best) return [];
 
     const out: ResolvedLivePhoto[] = [];
-    best.forEach((img, i) => {
-      const im = img as Record<string, unknown>;
-      if (!isLiveImage(im)) return;
-      const imageUrl = extractImageUrl(im);
-      const videoUrl = extractVideoUrl(im.video);
-      if (videoUrl) {
-        out.push({ index: i, imageUrl, videoUrl });
-      }
-    });
-    return out;
+    if (best) {
+      best.forEach((img, i) => {
+        const im = img as Record<string, unknown>;
+        if (!isLiveImage(im)) return;
+        const imageUrl = extractImageUrl(im);
+        const videoUrl = extractVideoUrl(im.video);
+        if (videoUrl) {
+          out.push({ index: i, imageUrl, videoUrl });
+        }
+      });
+    }
+    return { lives: out, stats };
   });
 
-  return result as ResolvedLivePhoto[];
+  return result as PageExtractResult;
 }
 
 type RouterDataExtractResult = {
@@ -806,12 +833,24 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
       // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
       if (hasData && item && isDefinitelyStaticItem(item)) {
         console.log(
-          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路，耗时 ${Date.now() - startTime}ms，结果: 无实况`
+          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
         );
         return null;
       }
       let finalLives = lives;
-      if (finalLives.length === 0) finalLives = await extractLivePhotosFromPage(page);
+      let fiberStats: PagePhotoStats | null = null;
+      if (finalLives.length === 0) {
+        const pageResult = await extractPhotosFromPage(page);
+        finalLives = pageResult.lives;
+        fiberStats = pageResult.stats;
+      }
+      // 真静态帖短路（fiber）：已找到图片数组但里面一张实况都没有，无需重试
+      if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
+        console.log(
+          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
+        );
+        return null;
+      }
       if (finalLives.length > 0) {
         console.log(
           `[live-photo] 单图实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，结果: 有实况`
@@ -889,12 +928,24 @@ export async function resolveLivePhotosForSlides(
       // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
       if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
         console.log(
-          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
+          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
         );
         return [];
       }
       let lives = rdResult.lives;
-      if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
+      let fiberStats: PagePhotoStats | null = null;
+      if (lives.length === 0) {
+        const pageResult = await extractPhotosFromPage(page);
+        lives = pageResult.lives;
+        fiberStats = pageResult.stats;
+      }
+      // 真静态帖短路（fiber）：已找到图片数组但里面一张实况都没有，无需重试
+      if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
+        console.log(
+          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
+        );
+        return [];
+      }
       // 首条路径未命中实况时，尝试备用路径（同一浏览器会话内导航）
       for (let p = 1; p < paths.length && lives.length === 0; p++) {
         try {
@@ -915,12 +966,23 @@ export async function resolveLivePhotosForSlides(
           rdResult = await extractLivePhotosFromRouterData(page);
           if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
             console.log(
-              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路，结果: 0 张实况照片`
+              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路(_ROUTER_DATA)，结果: 0 张实况照片`
             );
             return [];
           }
           lives = rdResult.lives;
-          if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
+          fiberStats = null;
+          if (lives.length === 0) {
+            const pageResult = await extractPhotosFromPage(page);
+            lives = pageResult.lives;
+            fiberStats = pageResult.stats;
+          }
+          if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
+            console.log(
+              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，结果: 0 张实况照片`
+            );
+            return [];
+          }
         } catch {
           /* 备用路径失败，继续 */
         }
