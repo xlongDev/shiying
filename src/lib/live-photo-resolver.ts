@@ -268,6 +268,12 @@ async function extractLivePhotosFromPage(
   return result as ResolvedLivePhoto[];
 }
 
+type RouterDataExtractResult = {
+  lives: ResolvedLivePhoto[];
+  item?: Record<string, unknown>;
+  hasData: boolean;
+};
+
 /**
  * 在已加载页面中优先读取 window._ROUTER_DATA（服务端下发的完整 aweme，含全部
  * images / live_photo 标记 / douyinvod 短片 URL），用 scanLivePhotosInRouterData 扫描
@@ -276,7 +282,7 @@ async function extractLivePhotosFromPage(
  */
 async function extractLivePhotosFromRouterData(
   page: import("puppeteer-core").Page
-): Promise<ResolvedLivePhoto[]> {
+): Promise<RouterDataExtractResult> {
   const rd = await page.evaluate(() => {
     const w = window as unknown as Record<string, unknown>;
     const r = w._ROUTER_DATA;
@@ -308,8 +314,30 @@ async function extractLivePhotosFromRouterData(
     }
     return null;
   });
-  if (!rd) return [];
-  return scanLivePhotosInRouterData(rd);
+  if (!rd) return { lives: [], hasData: false };
+  const item = findItemInRouterData(rd);
+  if (!item) return { lives: [], hasData: true };
+  const lives = scanLivePhotosInItem(item, rd);
+  return { lives, item, hasData: true };
+}
+
+/**
+ * 判定 aweme item 是否为"明确的纯静态帖"。
+ * 条件：_ROUTER_DATA 完整返回了 images 数组，且其中没有任何实况标记；
+ * 同时排除顶层 image_info.live_photo 的单图实况。
+ * 满足该条件即可短路浏览器兜底，避免对真静态帖白烧 3 次重试。
+ */
+function isDefinitelyStaticItem(item: Record<string, unknown>): boolean {
+  const imageInfo = (item.image_info ?? {}) as Record<string, unknown>;
+  if (imageInfo.live_photo === true || typeof imageInfo.live_photo === "object") {
+    return false;
+  }
+  const images = Array.isArray(item.images) ? (item.images as unknown[]) : [];
+  if (images.length === 0) return false;
+  return images.every((img) => {
+    if (!img || typeof img !== "object") return true;
+    return !isLiveImageApi(img as Record<string, unknown>);
+  });
 }
 
 /**
@@ -774,15 +802,23 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
     // 同一次浏览器会话内循环重提取，避免每次"为空"都重启 Chrome 烧 6s+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       // P0：优先读 window._ROUTER_DATA（完整 aweme，不受 slides 懒渲染影响），fiber 仅兜底
-      let lives = await extractLivePhotosFromRouterData(page);
-      if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
-      if (lives.length > 0) {
+      const { lives, item, hasData } = await extractLivePhotosFromRouterData(page);
+      // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
+      if (hasData && item && isDefinitelyStaticItem(item)) {
+        console.log(
+          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路，耗时 ${Date.now() - startTime}ms，结果: 无实况`
+        );
+        return null;
+      }
+      let finalLives = lives;
+      if (finalLives.length === 0) finalLives = await extractLivePhotosFromPage(page);
+      if (finalLives.length > 0) {
         console.log(
           `[live-photo] 单图实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，结果: 有实况`
         );
-        return lives[0].videoUrl;
+        return finalLives[0].videoUrl;
       }
-      lastResult = lives;
+      lastResult = finalLives;
       if (attempt < MAX_RETRIES) {
         logger.warn("live-photo", `第${attempt}次单图实况探测为空，重试...`);
         await new Promise((r) => setTimeout(r, 1500));
@@ -849,7 +885,15 @@ export async function resolveLivePhotosForSlides(
     // 同一次浏览器会话内循环重提取，避免每次"为空"都重启 Chrome 烧 6s+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       // P0：优先读 window._ROUTER_DATA（完整 aweme，不受 slides 懒渲染影响），fiber 仅兜底
-      let lives = await extractLivePhotosFromRouterData(page);
+      let rdResult = await extractLivePhotosFromRouterData(page);
+      // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
+      if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
+        console.log(
+          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
+        );
+        return [];
+      }
+      let lives = rdResult.lives;
       if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
       // 首条路径未命中实况时，尝试备用路径（同一浏览器会话内导航）
       for (let p = 1; p < paths.length && lives.length === 0; p++) {
@@ -868,7 +912,14 @@ export async function resolveLivePhotosForSlides(
               { timeout: 5000 }
             )
             .catch(() => {});
-          lives = await extractLivePhotosFromRouterData(page);
+          rdResult = await extractLivePhotosFromRouterData(page);
+          if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
+            console.log(
+              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路，结果: 0 张实况照片`
+            );
+            return [];
+          }
+          lives = rdResult.lives;
           if (lives.length === 0) lives = await extractLivePhotosFromPage(page);
         } catch {
           /* 备用路径失败，继续 */
