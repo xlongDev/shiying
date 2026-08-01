@@ -42,26 +42,19 @@ export async function POST(req: NextRequest) {
 
     // 跳过实况解析（skipLivePhoto=true）且 SSR 未直接拿到实况资源时，决定是否异步探测。
     // - slides（混合图文）：确定性可能含实况 → 骨架屏 pending + 「探测未完成」重试面板
-    // - note 单图：与 slides 同处理（骨架屏 + 重试）
-    // - note 多图：静默后台探测（livePhotoBackground），仅找到实况时才展示实况 UI，
-    //   探测失败/无实则静默降级为普通图文，不展示「探测未完成」面板，避免误报。
+    // - note（含单图/多图）：全部走静默后台探测（livePhotoBackground），仅找到实况时才展示实况 UI，
+    //   探测失败/无实则静默降级为普通图文，不展示「探测未完成」面板。
     //
-    // 深链（modal_id / aweme_id / item_ids）属于「类型未知」的分享，
-    // 常常就是实况照片帖（单图 or 多图混合），但历史上被当成普通 video、
-    // 多图时又走了「静默后台探测」——既不可见、又会在无头探测偶发失败时静默降级，
-    // 导致用户感知「明明有实况却不探测」。因此对这类深链强制使用「可见的探测中」态。
-    const isAmbiguousDeepLink = /[?&](?:modal_id|aweme_id|item_ids)=(\d+)/.test(url);
+    // 深链（modal_id / aweme_id / item_ids）历史上曾被误判为普通 video 导致实况漏探，
+    // 但现在浏览器兜底已能稳定拿到 item，且「单图静态图文」大量存在，若对深链单图强制 pending
+    // 会严重误报（用户反馈"全部都是静态图片的视频就不需要解析实况了"）。
+    // 因此对 note 类型统一静默探测；只有 slides 保持可见 pending。
 
     if (skipLivePhoto && !result.isLivePhoto && result.isImagePost) {
-      if (result.contentType === "slides" || isAmbiguousDeepLink) {
+      if (result.contentType === "slides") {
         result.livePhotoPending = true;
       } else if (result.contentType === "note") {
-        const imageCount = result.images?.length ?? 0;
-        if (imageCount === 1) {
-          result.livePhotoPending = true;
-        } else {
-          result.livePhotoBackground = true;
-        }
+        result.livePhotoBackground = true;
       }
     }
 
