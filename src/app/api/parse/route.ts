@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseVideo, ParseError } from "@/lib/parser";
 import { detectLivePhotoPresence } from "@/lib/live-photo-resolver";
 import { rateLimit } from "@/lib/rate-limit";
+import { getParseCapability } from "@/lib/parse-capability";
 import { logger } from "@/lib/logger";
 
 /** 从请求头提取客户端 IP（兼容反向代理 / 直连）。 */
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   // 第一道闸：按客户端 IP 限流，防止公开解析 API 被刷量 / 成本失控
-  const rl = rateLimit(`parse:${getClientIp(req)}`, 20, 60_000);
+  const rl = await rateLimit(`parse:${getClientIp(req)}`, 20, 60_000);
   if (!rl.allowed) {
     return NextResponse.json(
       { ok: false, error: "请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
@@ -82,6 +83,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, data: result });
   } catch (err) {
     if (err instanceof ParseError) {
+      // 后端降级（无 Chrome 且无国内服务）时，NO_ROUTER_DATA / SLIDES_NO_DATA
+      // 是确定性的环境缺失而非链接问题，返回 503 + 可操作信息，而非笼统 400。
+      if (err.code === "NO_ROUTER_DATA" || err.code === "SLIDES_NO_DATA") {
+        const cap = await getParseCapability();
+        if (cap.degraded) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                "当前服务器缺少解析后端（未安装 Chrome 且未配置国内签名服务），无法解析该链接。请自托管并安装 Chrome，或配置 LIVE_PHOTO_SERVICE_URL。",
+              code: "PARSE_BACKEND_UNAVAILABLE",
+            },
+            { status: 503 }
+          );
+        }
+      }
       return NextResponse.json({ ok: false, error: err.message, code: err.code }, { status: 400 });
     }
     logger.error("parse", "unexpected error:", err);

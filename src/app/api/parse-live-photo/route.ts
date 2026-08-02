@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   // 第一道闸：实况探测需拉起无头浏览器（高成本），限流更紧
-  const rl = rateLimit(`live:${getClientIp(req)}`, 6, 60_000);
+  const rl = await rateLimit(`live:${getClientIp(req)}`, 6, 60_000);
   if (!rl.allowed) {
     return NextResponse.json(
       { ok: false, error: "实况探测请求过于频繁，请稍后再试", code: "RATE_LIMITED" },

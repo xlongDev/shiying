@@ -6,6 +6,7 @@ import path from "path";
 import { ffmpegSemaphore } from "@/lib/concurrency";
 import { logger } from "@/lib/logger";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { buildUpstreamHeaders } from "@/lib/cdn";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
     // ---- Step 1: 下载视频流 ----
     console.log(`[live-compose] downloading video from: ${videoUrl.substring(0, 120)}`);
     const videoRes = await fetch(videoUrl, {
-      headers: getHeaders(videoUrl),
+      headers: buildUpstreamHeaders(videoUrl),
       redirect: "follow",
     });
 
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
     // ---- Step 2: 下载音频流 ----
     console.log(`[live-compose] downloading audio from: ${audioUrl.substring(0, 120)}`);
     const audioRes = await fetch(audioUrl, {
-      headers: getHeaders(audioUrl),
+      headers: buildUpstreamHeaders(audioUrl),
       redirect: "follow",
     });
 
@@ -183,32 +184,6 @@ function cleanUp(...paths: string[]) {
       // 忽略清理错误
     }
   }
-}
-
-function getHeaders(url: string): Record<string, string> {
-  const isDouyin =
-    url.includes("douyin") ||
-    url.includes("snssdk") ||
-    url.includes("douyinpic") ||
-    url.includes("byteimg") ||
-    url.includes("zjcdn") ||
-    url.includes("bytecdn") ||
-    url.includes("aweme") ||
-    url.includes("douyinstatic") ||
-    url.includes("douyinvod");
-
-  const headers: Record<string, string> = {
-    "user-agent":
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    accept: "*/*",
-    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-  };
-
-  if (isDouyin) {
-    headers["referer"] = "https://www.douyin.com/";
-  }
-
-  return headers;
 }
 
 async function getFfmpegPath(): Promise<string | null> {

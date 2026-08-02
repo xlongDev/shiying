@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { buildUpstreamHeaders } from "@/lib/cdn";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -38,43 +39,12 @@ export async function GET(req: NextRequest) {
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
   try {
-    const getHeaders = (url: string): Record<string, string> => {
-      const isDouyin =
-        url.includes("douyin") ||
-        url.includes("snssdk") ||
-        url.includes("douyinpic") ||
-        url.includes("byteimg") ||
-        url.includes("zjcdn") ||
-        url.includes("bytecdn") ||
-        url.includes("aweme") ||
-        url.includes("douyinstatic") ||
-        url.includes("douyinvod");
-
-      const isTikTok =
-        url.includes("tiktok") || url.includes("tiktokcdn") || url.includes("tiktokv");
-
-      const headers: Record<string, string> = {
-        "user-agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        accept: "*/*",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-      };
-
-      if (isDouyin) {
-        headers["referer"] = "https://www.douyin.com/";
-      } else if (isTikTok) {
-        headers["referer"] = "https://www.tiktok.com/";
-      }
-
-      return headers;
-    };
-
     // 第一步：如果是 snssdk play URL，先获取重定向地址
     let finalUrl = targetUrl;
     if (targetUrl.includes("snssdk") && targetUrl.includes("/play/")) {
       try {
         const probe = await fetch(targetUrl, {
-          headers: getHeaders(targetUrl),
+          headers: buildUpstreamHeaders(targetUrl),
           redirect: "manual",
           signal: controller.signal,
         });
@@ -94,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     // 第二步：下载最终内容（使用 redirect: follow 让 fetch 自动处理）
     const upstream = await fetch(finalUrl, {
-      headers: getHeaders(finalUrl),
+      headers: buildUpstreamHeaders(finalUrl),
       redirect: "follow",
       signal: controller.signal,
     });

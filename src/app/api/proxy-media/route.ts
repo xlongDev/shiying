@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { buildUpstreamHeaders } from "@/lib/cdn";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -38,34 +39,8 @@ export async function GET(req: NextRequest) {
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
   try {
-    const isDouyin =
-      targetUrl.includes("douyin") ||
-      targetUrl.includes("snssdk") ||
-      targetUrl.includes("douyinpic") ||
-      targetUrl.includes("byteimg") ||
-      targetUrl.includes("zjcdn") ||
-      targetUrl.includes("bytecdn") ||
-      targetUrl.includes("aweme") ||
-      targetUrl.includes("douyinstatic") ||
-      targetUrl.includes("ies-music") ||
-      targetUrl.includes("sign.douyinpic") ||
-      targetUrl.includes("p11-sign") ||
-      targetUrl.includes("p3-sign") ||
-      targetUrl.includes("p26-sign") ||
-      targetUrl.includes("p9-sign") ||
-      targetUrl.includes("p5-sign");
-
-    const headers: Record<string, string> = {
-      "user-agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-      accept: "*/*",
-      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-    };
-
-    // 抖音图片 CDN 需要 Referer 才能访问
-    if (isDouyin) {
-      headers["referer"] = "https://www.douyin.com/";
-    }
+    // 抖音图片 CDN 需要 Referer 才能访问（平台判断与 Referer 统一由 cdn.ts 提供）
+    const headers = buildUpstreamHeaders(targetUrl);
 
     // 对于 snssdk play URL，先 probe 获取重定向地址
     let finalUrl = targetUrl;
@@ -92,17 +67,7 @@ export async function GET(req: NextRequest) {
 
     // 下载最终内容
     const upstream = await fetch(finalUrl, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        accept: "*/*",
-        ...(finalUrl.includes("douyin") ||
-        finalUrl.includes("snssdk") ||
-        finalUrl.includes("douyinpic") ||
-        finalUrl.includes("sign")
-          ? { referer: "https://www.douyin.com/" }
-          : {}),
-      },
+      headers: buildUpstreamHeaders(finalUrl),
       redirect: "follow",
       signal: controller.signal,
     });

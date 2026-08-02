@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { buildUpstreamHeaders } from "@/lib/cdn";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -39,38 +40,12 @@ export async function GET(req: NextRequest) {
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
   try {
-    const getHeaders = (url: string): Record<string, string> => {
-      const isDouyin =
-        url.includes("douyin") ||
-        url.includes("snssdk") ||
-        url.includes("douyinpic") ||
-        url.includes("byteimg") ||
-        url.includes("zjcdn") ||
-        url.includes("bytecdn") ||
-        url.includes("aweme") ||
-        url.includes("douyinstatic") ||
-        url.includes("douyinvod");
-
-      const headers: Record<string, string> = {
-        "user-agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        accept: "*/*",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-      };
-
-      if (isDouyin) {
-        headers["referer"] = "https://www.douyin.com/";
-      }
-
-      return headers;
-    };
-
     // 对于 snssdk play URL，先 probe 获取重定向地址
     let finalUrl = targetUrl;
     if (targetUrl.includes("snssdk") && targetUrl.includes("/play")) {
       try {
         const probe = await fetch(targetUrl, {
-          headers: getHeaders(targetUrl),
+          headers: buildUpstreamHeaders(targetUrl),
           redirect: "manual",
           signal: controller.signal,
         });
@@ -89,7 +64,7 @@ export async function GET(req: NextRequest) {
     }
 
     // 透传客户端 Range 请求头，支持浏览器流式拖动。
-    const upstreamHeaders = getHeaders(finalUrl);
+    const upstreamHeaders = buildUpstreamHeaders(finalUrl);
     const range = req.headers.get("range");
     if (range) upstreamHeaders["range"] = range;
 

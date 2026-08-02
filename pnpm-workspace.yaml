@@ -5,4 +5,3 @@
 allowBuilds:
   sharp: true
   ffmpeg-static: true
-  "@sparticuz/chromium": set this to true or false

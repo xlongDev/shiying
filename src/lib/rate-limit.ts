@@ -1,19 +1,20 @@
 /**
- * 轻量级内存固定窗口限流（无第三方依赖）。
+ * 请求限流（可切换存储后端）。
  *
- * 作用：作为公开解析 API 的第一道闸，防止被刷量 / 成本失控（无头浏览器 + SSR
- * fetch 均为高成本操作）。
+ * 作为公开解析 API 的第一道闸，防止被刷量 / 成本失控（无头浏览器 + SSR fetch
+ * 均为高成本操作）。
  *
- * 局限：serverless 多实例下内存不共享，无法做跨实例精确限流。若需全局精确限流，
- * 应接入 Redis / Upstash 等外部存储。本实现在单实例维度已能有效挡住绝大多数滥用。
+ * 存储后端：
+ *   - 默认：进程内存固定窗口（MemoryRateLimiter），单实例维度已能挡住绝大多数滥用；
+ *   - 跨实例：配置 UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN 后自动切换到
+ *     Upstash Ratelimit（@upstash/ratelimit + @upstash/redis），解决 serverless 多实例
+ *     下内存不共享、限流可被轮换实例绕过的问题。
+ *
+ * 依赖说明：@upstash/ratelimit / @upstash/redis 为**可选依赖**，仅在启用 Upstash 时需要。
+ * 采用动态导入，未安装时自动回退内存限流，不影响安装与构建。启用时请先
+ * `pnpm add @upstash/ratelimit @upstash/redis`。
  */
-
-interface WindowEntry {
-  count: number;
-  resetAt: number;
-}
-
-const buckets = new Map<string, WindowEntry>();
+import { logger } from "./logger";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -21,37 +22,137 @@ export interface RateLimitResult {
   retryAfterMs: number;
 }
 
+interface RateLimiter {
+  limit(key: string): Promise<RateLimitResult>;
+}
+
+interface WindowEntry {
+  count: number;
+  resetAt: number;
+}
+
+/** 内存固定窗口限流（默认后端，保留原行为）。 */
+class MemoryRateLimiter implements RateLimiter {
+  private buckets = new Map<string, WindowEntry>();
+
+  constructor(
+    private readonly maxLimit: number,
+    private readonly window: number
+  ) {
+    const timer = setInterval(() => this.prune(), 5 * 60 * 1000) as unknown as {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
+  async limit(key: string): Promise<RateLimitResult> {
+    const now = Date.now();
+    const entry = this.buckets.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      this.buckets.set(key, { count: 1, resetAt: now + this.window });
+      return { allowed: true, remaining: this.maxLimit - 1, retryAfterMs: 0 };
+    }
+
+    if (entry.count >= this.maxLimit) {
+      return { allowed: false, remaining: 0, retryAfterMs: entry.resetAt - now };
+    }
+
+    entry.count += 1;
+    return { allowed: true, remaining: this.maxLimit - entry.count, retryAfterMs: 0 };
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [k, v] of this.buckets) {
+      if (v.resetAt <= now) this.buckets.delete(k);
+    }
+  }
+}
+
 /**
- * 固定窗口限流。
+ * 创建 Upstash Ratelimit 后端（滑动窗口）。
+ * 通过动态导入避免未安装 @upstash/* 时类型/构建报错；缺失依赖时抛出，由调用方回退内存。
+ */
+async function createUpstashLimiter(
+  url: string,
+  token: string,
+  limit: number,
+  windowMs: number
+): Promise<RateLimiter> {
+  // `as string` 使 specifier 成为非字面量，TS 不再尝试解析模块（无需安装即可编译）。
+  const ratelimitMod: any = await import("@upstash/ratelimit" as string).catch(() => null);
+  const redisMod: any = await import("@upstash/redis" as string).catch(() => null);
+
+  if (!ratelimitMod?.Ratelimit || !redisMod?.Redis) {
+    throw new Error("未安装 @upstash/ratelimit / @upstash/redis");
+  }
+
+  const redis = new redisMod.Redis({ url, token });
+  const rl = new ratelimitMod.Ratelimit({
+    redis,
+    limiter: ratelimitMod.Ratelimit.slidingWindow(limit, `${Math.round(windowMs / 1000)} s`),
+    prefix: "shiying_rl",
+    analytics: false,
+  });
+
+  return {
+    async limit(key: string): Promise<RateLimitResult> {
+      const res = await rl.limit(key);
+      return {
+        allowed: res.success,
+        remaining: res.remaining,
+        retryAfterMs: Math.max(0, res.reset - Date.now()),
+      };
+    },
+  };
+}
+
+const limiterCache = new Map<string, RateLimiter>();
+const initPromises = new Map<string, Promise<RateLimiter>>();
+
+async function getLimiter(limit: number, windowMs: number): Promise<RateLimiter> {
+  const cacheKey = `${limit}:${windowMs}`;
+  const cached = limiterCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = initPromises.get(cacheKey);
+  if (pending) return pending;
+
+  const p = (async () => {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (url && token) {
+      try {
+        const rl = await createUpstashLimiter(url, token, limit, windowMs);
+        limiterCache.set(cacheKey, rl);
+        logger.info("rate-limit", "已启用 Upstash 跨实例限流");
+        return rl;
+      } catch (err) {
+        logger.warn("rate-limit", "Upstash 初始化失败，回退内存限流:", err);
+      }
+    }
+    const mem = new MemoryRateLimiter(limit, windowMs);
+    limiterCache.set(cacheKey, mem);
+    return mem;
+  })();
+
+  initPromises.set(cacheKey, p);
+  // 解析完成后清理 pending，避免悬挂引用
+  p.finally(() => initPromises.delete(cacheKey));
+  return p;
+}
+
+/**
+ * 固定窗口 / 滑动窗口限流（依后端而定）。
  * @param key   限流维度（通常按客户端 IP）
  * @param limit 窗口内最大允许请求数
  * @param windowMs 窗口时长（毫秒）
  */
-export function rateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
-  const now = Date.now();
-  const entry = buckets.get(key);
-
-  if (!entry || entry.resetAt <= now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true, remaining: limit - 1, retryAfterMs: 0 };
-  }
-
-  if (entry.count >= limit) {
-    return { allowed: false, remaining: 0, retryAfterMs: entry.resetAt - now };
-  }
-
-  entry.count += 1;
-  return { allowed: true, remaining: limit - entry.count, retryAfterMs: 0 };
+export async function rateLimit(
+  key: string,
+  limit: number,
+  windowMs: number
+): Promise<RateLimitResult> {
+  const limiter = await getLimiter(limit, windowMs);
+  return limiter.limit(key);
 }
-
-/** 清理过期桶，避免内存无限增长。 */
-function pruneBuckets(): void {
-  const now = Date.now();
-  for (const [k, v] of buckets) {
-    if (v.resetAt <= now) buckets.delete(k);
-  }
-}
-
-// 每 5 分钟清理一次；unref 避免阻止进程退出。
-const pruneTimer = setInterval(pruneBuckets, 5 * 60 * 1000) as unknown as { unref?: () => void };
-pruneTimer.unref?.();

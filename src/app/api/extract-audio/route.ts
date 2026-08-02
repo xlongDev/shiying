@@ -7,6 +7,7 @@ import { Readable } from "stream";
 import { ffmpegSemaphore } from "@/lib/concurrency";
 import { logger } from "@/lib/logger";
 import { isAllowedTarget } from "@/lib/ssrf";
+import { buildUpstreamHeaders } from "@/lib/cdn";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
     if (isSnssdk) {
       try {
         const probe = await fetch(targetUrl, {
-          headers: getHeaders(targetUrl),
+          headers: buildUpstreamHeaders(targetUrl),
           redirect: "manual",
         });
         if (probe.status >= 300 && probe.status < 400) {
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
 
     // 下载视频流到临时文件
     const videoRes = await fetch(finalUrl, {
-      headers: getHeaders(finalUrl),
+      headers: buildUpstreamHeaders(finalUrl),
       redirect: "follow",
     });
 
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
           console.log(`[extract-audio] retrying with snssdk: ${snssdkUrl}`);
 
           const snssdkRes = await fetch(snssdkUrl, {
-            headers: getHeaders(snssdkUrl),
+            headers: buildUpstreamHeaders(snssdkUrl),
             redirect: "follow",
           });
 
@@ -243,37 +244,6 @@ function extractVideoId(url: string): string | null {
  * 现返回 status_code:11110(encrypt_data_miss) 已废弃，已移除。视频流过小且 CDN URL
  * 不含 video_id 时无法自动恢复，交由下方最终检查返回 502，不再静默重试失效 API。
  */
-
-function getHeaders(url: string): Record<string, string> {
-  const isDouyin =
-    url.includes("douyin") ||
-    url.includes("snssdk") ||
-    url.includes("douyinpic") ||
-    url.includes("byteimg") ||
-    url.includes("zjcdn") ||
-    url.includes("bytecdn") ||
-    url.includes("aweme") ||
-    url.includes("douyinstatic") ||
-    url.includes("douyinvod") ||
-    url.includes("ixigua");
-
-  const isTikTok = url.includes("tiktok") || url.includes("tiktokcdn") || url.includes("tiktokv");
-
-  const headers: Record<string, string> = {
-    "user-agent":
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    accept: "*/*",
-    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-  };
-
-  if (isDouyin) {
-    headers["referer"] = "https://www.douyin.com/";
-  } else if (isTikTok) {
-    headers["referer"] = "https://www.tiktok.com/";
-  }
-
-  return headers;
-}
 
 /**
  * 查找可用的 ffmpeg 可执行文件路径（结果在模块作用域缓存）

@@ -10,9 +10,11 @@ import { logger } from "./logger";
  *   常见安装路径 > which/where。
  *
  * 注意：SSR 扫描实况解析（resolveLivePhotosViaSsr）为主路径，无需浏览器；
- * 无头浏览器仅作本地回退（多图 slides 实况 SSR 不含动态短片 URL 时），
- * 依赖本机已安装的 Chrome。Vercel 等无系统 Chrome 的 serverless 环境靠 SSR
- * 路径即可工作（单图实况可在 Vercel 直接生效），无需自带浏览器二进制。
+ * 但主解析链路（SSR → a_bogus → Chrome 兜底）在海外 / 被 WAF 时前两级失效，
+ * **唯一可靠路径是本地真实 Chrome**。因此 Chrome 是本应用的核心依赖：
+ *   - 自托管 Node 服务：安装 Chrome 并设置 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH；
+ *   - Vercel 等无系统 Chrome 的 serverless 环境：因无浏览器，需配置
+ *     LIVE_PHOTO_SERVICE_URL（部署在国内 IP 的 a_bogus 签名桥）才能解析。
  */
 export async function findChromeExecutable(): Promise<string | null> {
   const envPath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
@@ -77,7 +79,7 @@ export async function findChromeExecutable(): Promise<string | null> {
 
   logger.warn(
     "chrome-finder",
-    "未找到 Chrome：实况照片解析将不可用。自托管请安装 Chrome 并设置 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH；部署到 Vercel 等无系统 Chrome 的环境请安装可选依赖 @sparticuz/chromium。"
+    "未找到 Chrome：浏览器兜底不可用。自托管请安装 Chrome 并设置 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH；部署到 Vercel 等无系统 Chrome 的 serverless 环境请配置 LIVE_PHOTO_SERVICE_URL（国内 IP 签名桥）。"
   );
   return null;
 }
