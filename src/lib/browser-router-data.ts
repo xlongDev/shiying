@@ -21,42 +21,48 @@
  * 变量 / 函数 / import，所有 DOM 读取逻辑必须内联在回调内部。
  */
 import { logger } from "./logger";
-import { acquirePage, releasePage, navigateAndWait } from "./browser-pool";
-import { findItemInRouterData } from "./parser/extract";
+import { acquirePage, releasePage } from "./browser-pool";
+import { extractRouterData, findItemInRouterData } from "./parser/extract";
 
 /**
  * 在浏览器上下文内读取 window._ROUTER_DATA（优先），缺失时回退扫描内联 <script>。
  * 必须保持自包含——仅使用 window / document / JSON 等浏览器全局，不得引用外部作用域。
+ *
+ * 健壮性：所有属性访问带 try/catch，避免跨域 iframe / 已销毁 context 抛异常。
  */
 function readRouterDataInPage(): string | null {
-  const w = window as unknown as Record<string, unknown>;
-  const rd = w._ROUTER_DATA;
-  if (rd) {
-    try {
-      return JSON.stringify(rd);
-    } catch {
-      /* 序列化失败则尝试下方脚本扫描 */
-    }
-  }
-  const scripts = Array.from(document.querySelectorAll("script"));
-  for (const s of scripts) {
-    const txt = s.textContent || "";
-    const idx = txt.indexOf("_ROUTER_DATA");
-    if (idx < 0) continue;
-    // 深度括号匹配，正确处理超大嵌套 JSON（比惰性正则稳健）
-    const eq = txt.indexOf("=", idx);
-    if (eq < 0) continue;
-    const brace = txt.indexOf("{", eq);
-    if (brace < 0) continue;
-    let depth = 0;
-    for (let i = brace; i < txt.length; i++) {
-      const ch = txt[i];
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) return txt.slice(brace, i + 1);
+  try {
+    const w = window as unknown as Record<string, unknown>;
+    const rd = w._ROUTER_DATA;
+    if (rd) {
+      try {
+        return JSON.stringify(rd);
+      } catch {
+        /* 序列化失败则尝试下方脚本扫描 */
       }
     }
+    const scripts = Array.from(document.querySelectorAll("script"));
+    for (const s of scripts) {
+      const txt = s.textContent || "";
+      const idx = txt.indexOf("_ROUTER_DATA");
+      if (idx < 0) continue;
+      // 深度括号匹配，正确处理超大嵌套 JSON（比惰性正则稳健）
+      const eq = txt.indexOf("=", idx);
+      if (eq < 0) continue;
+      const brace = txt.indexOf("{", eq);
+      if (brace < 0) continue;
+      let depth = 0;
+      for (let i = brace; i < txt.length; i++) {
+        const ch = txt[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) return txt.slice(brace, i + 1);
+        }
+      }
+    }
+  } catch {
+    /* evaluate 期间页面导航/卸载时可能抛错，直接返回 null */
   }
   return null;
 }
@@ -68,98 +74,168 @@ function readRouterDataInPage(): string | null {
  * 判定：对象含 desc + author + (music|statistics|video|images) 即可视为 item；
  * 若存在多个候选，优先匹配 aweme_id / awemeId === targetId。
  *
- * 健壮性（修复旧实现"Cannot convert undefined or null to object"）：
+ * 健壮性（修复旧实现"Cannot convert undefined or null to object"与跨域 SecurityError）：
  *  - getFiber 向上遍历祖先节点查找 __reactFiber，避免 seed 节点未直接挂 fiber 时直接返回 null；
  *  - 遍历 memoizedProps + memoizedState + child/sibling/return，覆盖 state 中的数据；
- *  - 全程 null / 类型守卫，绝不 Object.keys 未定义对象。
+ *  - 全程 null / 类型 / 跨域守卫：所有属性访问走 safeGet；遇到 Window/Node/Location/History/
+ *    函数等危险对象直接跳过，避免读取跨域 iframe 或 DOM getter 触发 SecurityError；
+ *  - 外层 try/catch：即使 evaluate 期间发生不可预期异常，也返回 null 而不是中断调用方。
  */
 function extractItemFromFiberInPage(targetId: string): Record<string, unknown> | null {
-  function getFiber(el: Element | null): Record<string, unknown> | null {
-    if (!el) return null;
-    const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
-    return key
-      ? ((el as unknown as Record<string, unknown>)[key] as Record<string, unknown>)
-      : null;
-  }
-
-  const seedEl: Element | null =
-    document.querySelector(".dySwiperSlide") ||
-    document.querySelector(".note-detail-container") ||
-    document.querySelector("video") ||
-    document.body;
-  let start = getFiber(seedEl);
-  if (!start) {
-    // 向上遍历 DOM 树，找到首个带 fiber 的祖先节点
-    let e: Element | null = document.body;
-    while (e && !start) {
-      start = getFiber(e);
-      e = e.firstElementChild;
+  try {
+    function getFiber(el: Element | null): Record<string, unknown> | null {
+      if (!el) return null;
+      const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
+      return key
+        ? ((el as unknown as Record<string, unknown>)[key] as Record<string, unknown>)
+        : null;
     }
-  }
-  if (!start) return null;
 
-  const isItemLike = (o: unknown): boolean => {
-    if (!o || typeof o !== "object") return false;
-    const obj = o as Record<string, unknown>;
-    const hasDesc = typeof obj.desc === "string";
-    const hasAuthor = !!(obj.author && typeof obj.author === "object");
-    const hasMusic = !!(obj.music && typeof obj.music === "object");
-    const hasStats = !!(obj.statistics && typeof obj.statistics === "object");
-    const hasVideo = !!(obj.video && typeof obj.video === "object");
-    const hasImages = Array.isArray(obj.images);
-    return hasDesc && hasAuthor && (hasMusic || hasStats || hasVideo || hasImages);
-  };
-  const getId = (o: unknown): string | undefined => {
-    if (!o || typeof o !== "object") return undefined;
-    const obj = o as Record<string, unknown>;
-    const id = obj.aweme_id ?? obj.awemeId ?? obj.awemeIdList;
-    return typeof id === "string" || typeof id === "number" ? String(id) : undefined;
-  };
-
-  const visited = new Set<unknown>();
-  const stack: unknown[] = [start];
-  let bestMatch: Record<string, unknown> | null = null;
-  let n = 0;
-  // 遍历上限：slides（混合图文）fiber 树较深，原 60k 可能在抵达 item 前就终止，
-  // 提高到 200k 与 live-photo-resolver 保持一致。
-  while (stack.length && n < 200000) {
-    const f = stack.pop() as Record<string, unknown> | undefined;
-    n++;
-    if (!f || typeof f !== "object" || visited.has(f)) continue;
-    visited.add(f);
-
-    const subjects: unknown[] = [];
-    if (f.memoizedProps && typeof f.memoizedProps === "object") subjects.push(f.memoizedProps);
-    if (f.memoizedState && typeof f.memoizedState === "object") subjects.push(f.memoizedState);
-
-    for (const subj of subjects) {
-      const queue: unknown[] = [subj];
-      const seen = new Set<unknown>();
-      let m = 0;
-      while (queue.length && m < 8000) {
-        m++;
-        const cur = queue.shift();
-        if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
-        seen.add(cur);
-        if (isItemLike(cur)) {
-          if (getId(cur) === targetId) return cur as Record<string, unknown>;
-          if (!bestMatch) bestMatch = cur as Record<string, unknown>;
-        }
-        if (Array.isArray(cur)) queue.push(...cur);
-        else {
-          for (const k of Object.keys(cur)) {
-            if (k.startsWith("__react")) continue;
-            queue.push((cur as Record<string, unknown>)[k]);
-          }
-        }
+    // 安全读取对象属性，避免跨域 iframe / DOM getter / Illegal invocation
+    function safeGet<T>(obj: unknown, key: string): T | undefined {
+      try {
+        if (!obj || typeof obj !== "object") return undefined;
+        return (obj as Record<string, unknown>)[key] as T;
+      } catch {
+        return undefined;
       }
     }
 
-    if (f.child) stack.push(f.child);
-    if (f.sibling) stack.push(f.sibling);
-    if (f.return) stack.push(f.return);
+    function safeKeys(obj: unknown): string[] {
+      try {
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
+        return Object.keys(obj);
+      } catch {
+        return [];
+      }
+    }
+
+    // 识别并跳过危险对象：DOM 节点、Window、Location、History、函数、跨域对象
+    function isUnsafe(o: unknown): boolean {
+      if (o == null) return true;
+      if (typeof o === "function") return true;
+      if (typeof o !== "object") return false;
+      try {
+        // DOM / Window / Location / History 检测
+        if (typeof (o as Record<string, unknown>).nodeType === "number") return true;
+        const winLike =
+          (o as Record<string, unknown>).self === o && (o as Record<string, unknown>).window === o;
+        if (winLike) return true;
+        if (o instanceof Window) return true;
+        if (o instanceof Node) return true;
+        if (o instanceof Location) return true;
+        if (o instanceof History) return true;
+      } catch {
+        // 访问 iframe 里的对象时 instanceof 可能抛 SecurityError，直接视为不安全
+        return true;
+      }
+      return false;
+    }
+
+    const seedEl: Element | null =
+      document.querySelector(".dySwiperSlide") ||
+      document.querySelector(".note-detail-container") ||
+      document.querySelector("video") ||
+      document.body;
+    let start = getFiber(seedEl);
+    if (!start) {
+      // 向上遍历 DOM 树，找到首个带 fiber 的祖先节点
+      let e: Element | null = document.body;
+      while (e && !start) {
+        start = getFiber(e);
+        e = e.firstElementChild;
+      }
+    }
+    if (!start) return null;
+
+    const isItemLike = (o: unknown): boolean => {
+      if (!o || typeof o !== "object" || isUnsafe(o)) return false;
+      try {
+        const obj = o as Record<string, unknown>;
+        const hasDesc = typeof safeGet<string>(obj, "desc") === "string";
+        const author = safeGet<unknown>(obj, "author");
+        const music = safeGet<unknown>(obj, "music");
+        const statistics = safeGet<unknown>(obj, "statistics");
+        const video = safeGet<unknown>(obj, "video");
+        const images = safeGet<unknown[]>(obj, "images");
+        const hasAuthor = !!author && typeof author === "object" && !isUnsafe(author);
+        const hasMusic = !!music && typeof music === "object" && !isUnsafe(music);
+        const hasStats = !!statistics && typeof statistics === "object" && !isUnsafe(statistics);
+        const hasVideo = !!video && typeof video === "object" && !isUnsafe(video);
+        const hasImages = Array.isArray(images);
+        return hasDesc && hasAuthor && (hasMusic || hasStats || hasVideo || hasImages);
+      } catch {
+        return false;
+      }
+    };
+    const getId = (o: unknown): string | undefined => {
+      if (!o || typeof o !== "object" || isUnsafe(o)) return undefined;
+      try {
+        const obj = o as Record<string, unknown>;
+        const id =
+          safeGet(obj, "aweme_id") ?? safeGet(obj, "awemeId") ?? safeGet(obj, "awemeIdList");
+        return typeof id === "string" || typeof id === "number" ? String(id) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const visited = new Set<unknown>();
+    const stack: unknown[] = [start];
+    let bestMatch: Record<string, unknown> | null = null;
+    let n = 0;
+
+    // 遍历上限：slides（混合图文）fiber 树较深，原 60k 可能在抵达 item 前就终止，
+    // 提高到 200k 与 live-photo-resolver 保持一致。
+    while (stack.length && n < 200000) {
+      const f = stack.pop() as Record<string, unknown> | undefined;
+      n++;
+      if (!f || typeof f !== "object" || visited.has(f)) continue;
+      visited.add(f);
+
+      const subjects: unknown[] = [];
+      const props = safeGet<Record<string, unknown>>(f, "memoizedProps");
+      const state = safeGet<Record<string, unknown>>(f, "memoizedState");
+      if (props && typeof props === "object" && !isUnsafe(props)) subjects.push(props);
+      if (state && typeof state === "object" && !isUnsafe(state)) subjects.push(state);
+
+      for (const subj of subjects) {
+        const queue: unknown[] = [subj];
+        const seen = new Set<unknown>();
+        let m = 0;
+        while (queue.length && m < 8000) {
+          m++;
+          const cur = queue.shift();
+          if (!cur || typeof cur !== "object" || seen.has(cur) || isUnsafe(cur)) continue;
+          seen.add(cur);
+          if (isItemLike(cur)) {
+            if (getId(cur) === targetId) return cur as Record<string, unknown>;
+            if (!bestMatch) bestMatch = cur as Record<string, unknown>;
+          }
+          if (Array.isArray(cur)) {
+            for (const item of cur) queue.push(item);
+          } else {
+            for (const k of safeKeys(cur)) {
+              if (k.startsWith("__react")) continue;
+              queue.push(safeGet(cur, k));
+            }
+          }
+        }
+      }
+
+      const child = safeGet(f, "child");
+      const sibling = safeGet(f, "sibling");
+      const ret = safeGet(f, "return");
+      if (child) stack.push(child);
+      if (sibling) stack.push(sibling);
+      if (ret) stack.push(ret);
+    }
+    return bestMatch;
+  } catch {
+    // evaluate 期间页面导航/卸载/跨域访问等不可控异常，统一返回 null，
+    // 让调用方继续下一候选或最终 400，而不是抛未处理异常。
+    return null;
   }
-  return bestMatch;
 }
 
 /**
@@ -167,8 +243,12 @@ function extractItemFromFiberInPage(targetId: string): Record<string, unknown> |
  * 复用 browser-pool 的常驻共享浏览器（warm 复用，不再冷启动），优先加载 www.douyin.com
  * 桌面端（已被实况探测验证可绕过 WAF），依次尝试 note / video 两条路由。
  *
- * 健壮性：navigateAndWait 已做 hydration + 数据注入轮询；evaluate 异常（含 SPA 导航中
- * 的 Execution context was destroyed）被捕获并切换到下一个候选 URL。
+ * 关键修复（针对用户日志中的 400）：
+ *  1. 优先从 page.goto 返回的初始 response body 提取 _ROUTER_DATA，避免 SPA 客户端
+ *     重定向导致 evaluate 时 "Execution context was destroyed"；
+ *  2. evaluate 前等待 document.readyState === 'complete'，让 SPA 导航稳定；
+ *  3. fiber 遍历增加 safeGet / isUnsafe 守卫，避免访问跨域 iframe / DOM getter 触发
+ *     SecurityError / Illegal invocation。
  *
  * @returns item 对象，或 null（无 Chrome / 导航失败 / 未找到 item）
  */
@@ -190,20 +270,54 @@ export async function loadRouterDataViaBrowser(
 
   try {
     for (const url of candidates) {
-      const navOk = await navigateAndWait(page, url, 15000);
-      if (!navOk) continue;
+      // 导航，保留 response 以便从初始 HTML 提取 _ROUTER_DATA
+      let response: import("puppeteer-core").HTTPResponse | null = null;
+      try {
+        response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+      } catch (gotoErr) {
+        logger.warn("aweme-detail", `导航未完成 ${url}:`, (gotoErr as Error)?.message ?? gotoErr);
+        continue;
+      }
 
-      // 尝试读取 _ROUTER_DATA
+      // 1) 优先从初始 response body 提取（不受后续 SPA 导航 / context 销毁影响）
+      if (response) {
+        try {
+          const html = await response.text();
+          const rd = extractRouterData(html);
+          if (rd) {
+            const item = findItemInRouterData(rd);
+            if (item) {
+              logger.info("aweme-detail", `浏览器兜底命中(response _ROUTER_DATA) ${url}`);
+              return item;
+            }
+          }
+        } catch (bodyErr) {
+          logger.warn(
+            "aweme-detail",
+            `读取 response body 异常 ${url}:`,
+            (bodyErr as Error)?.message ?? bodyErr
+          );
+        }
+      }
+
+      // 2) 等待 SPA 客户端重定向/ hydration 稳定（常见从 /note 跳到 /video）
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        await page.waitForFunction(() => document.readyState === "complete", { timeout: 5000 });
+      } catch {
+        // 超时也继续，下面 evaluate 仍有兜底
+      }
+
+      // 3) 尝试读取当前 window._ROUTER_DATA / 内联 script
       let rd: string | null = null;
       try {
         rd = await page.evaluate(readRouterDataInPage);
       } catch (evalErr) {
         logger.warn(
           "aweme-detail",
-          `读取 _ROUTER_DATA 异常（尝试下一候选）:`,
+          `读取 _ROUTER_DATA 异常（尝试 fiber 兜底）:`,
           (evalErr as Error)?.message ?? evalErr
         );
-        continue;
       }
 
       if (rd) {
@@ -215,7 +329,7 @@ export async function loadRouterDataViaBrowser(
         logger.warn("aweme-detail", `浏览器兜底读取到 _ROUTER_DATA 但未解析出 item ${url}`);
       }
 
-      // _ROUTER_DATA 未命中：遍历 fiber 兜底（SPA 数据可能只在 fiber 中）
+      // 4) _ROUTER_DATA 未命中：遍历 fiber 兜底（SPA 数据可能只在 fiber 中）
       try {
         const fiberItem = await page.evaluate(extractItemFromFiberInPage, awemeId);
         if (fiberItem) {
@@ -228,7 +342,7 @@ export async function loadRouterDataViaBrowser(
           `fiber 兜底异常（尝试下一候选）:`,
           (fiberErr as Error)?.message ?? fiberErr
         );
-        // 导航中途 context 销毁时继续下一候选（同一 page 重新 goto 会重建 context）
+        // 导航中途 context 销毁时继续下一候选
         continue;
       }
     }
