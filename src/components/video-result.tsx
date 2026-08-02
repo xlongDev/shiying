@@ -1,12 +1,22 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { Heart, MessageCircle, Share2, Image as ImageIcon, Clock } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
 import { toast } from "sonner";
 import type { ParsedVideo } from "@/lib/parser";
-import { ComposeVideoModal } from "@/components/compose-video-modal";
+
+/**
+ * 图文视频合成弹窗按需加载：其内部链路（useComposeVideo → @/lib/ffmpeg-compose → @ffmpeg/util）
+ * 体积较重，通过 next/dynamic 拆为独立异步 chunk，避免打进首屏主包。
+ * 该组件仅由客户端组件渲染且依赖浏览器 API，故 ssr:false。
+ */
+const ComposeVideoModal = dynamic(
+  () => import("@/components/compose-video-modal").then((m) => m.ComposeVideoModal),
+  { ssr: false, loading: () => null }
+);
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import {
   buildMediaProxyUrl,
