@@ -21,8 +21,8 @@
  * 变量 / 函数 / import，所有 DOM 读取逻辑必须内联在回调内部。
  */
 import { logger } from "./logger";
-import { acquirePage, releasePage } from "./browser-pool";
-import { extractRouterData, findItemInRouterData } from "./parser/extract";
+import { acquirePage, releasePage, navigateAndWait, DESKTOP_UA } from "./browser-pool";
+import { extractRouterData, findItemInRouterData, MOBILE_UA } from "./parser/extract";
 
 /**
  * 在浏览器上下文内读取 window._ROUTER_DATA（优先），缺失时回退扫描内联 <script>。
@@ -238,17 +238,34 @@ function extractItemFromFiberInPage(targetId: string): Record<string, unknown> |
   }
 }
 
+function isWafResponse(html: string): boolean {
+  const marker = html.slice(0, 6000).toLowerCase();
+  return (
+    marker.includes("waf_js") ||
+    marker.includes("wafchallengeid") ||
+    marker.includes("argus-csp-token") ||
+    marker.includes("/waf-jschallenge/")
+  );
+}
+
 /**
  * 通过无头浏览器获取完整 aweme item（含 video / images / author / music / statistics）。
- * 复用 browser-pool 的常驻共享浏览器（warm 复用，不再冷启动），优先加载 www.douyin.com
- * 桌面端（已被实况探测验证可绕过 WAF），依次尝试 note / video 两条路由。
+ * 复用 browser-pool 的常驻共享浏览器（warm 复用，不再冷启动）。
+ *
+ * 候选策略（按可靠性排序）：
+ *  1. www.iesdouyin.com/share/{note|video}/{id}/ + 移动端 UA：
+ *     抖音 SSR 分享页会把完整 aweme 直接嵌进 HTML 的 window._ROUTER_DATA，
+ *     真实 Chrome 的 TLS 指纹通常能绕过 iesdouyin 对裸 Node fetch 的 WAF。
+ *  2. www.douyin.com/note|video/{id} + 桌面端 UA：
+ *     如果 iesdouyin 被拦截或重定向异常，回退桌面端；优先读 hydration 后的
+ *     _ROUTER_DATA，未命中则遍历 React fiber 兜底。
  *
  * 关键修复（针对用户日志中的 400）：
- *  1. 优先从 page.goto 返回的初始 response body 提取 _ROUTER_DATA，避免 SPA 客户端
- *     重定向导致 evaluate 时 "Execution context was destroyed"；
- *  2. evaluate 前等待 document.readyState === 'complete'，让 SPA 导航稳定；
- *  3. fiber 遍历增加 safeGet / isUnsafe 守卫，避免访问跨域 iframe / DOM getter 触发
- *     SecurityError / Illegal invocation。
+ *  - 优先从 page.goto 返回的初始 response body 提取 _ROUTER_DATA，避免 SPA 客户端
+ *    重定向导致 evaluate 时 "Execution context was destroyed"；
+ *  - 对桌面端用 navigateAndWait 等待 hydration，避免数据未挂载就读取；
+ *  - fiber 遍历增加 safeGet / isUnsafe 守卫，避免访问跨域 iframe / DOM getter 触发
+ *    SecurityError / Illegal invocation。
  *
  * @returns item 对象，或 null（无 Chrome / 导航失败 / 未找到 item）
  */
@@ -261,15 +278,23 @@ export async function loadRouterDataViaBrowser(
     return null;
   }
 
-  // 候选顺序：www.douyin.com 桌面端优先（被验证可绕过 WAF）。
-  // 注：iesdouyin 分享页在此处常 ERR_ABORTED 浪费时间，且桌面端数据更全，故不列入。
-  const candidates = [
-    `https://www.douyin.com/note/${awemeId}`,
-    `https://www.douyin.com/video/${awemeId}`,
+  // 候选顺序：iesdouyin 移动端分享页优先（SSR 数据更全），桌面端 fiber 兜底。
+  const candidates: { url: string; ua: "mobile" | "desktop" }[] = [
+    { url: `https://www.iesdouyin.com/share/note/${awemeId}/`, ua: "mobile" },
+    { url: `https://www.iesdouyin.com/share/video/${awemeId}/`, ua: "mobile" },
+    { url: `https://www.douyin.com/note/${awemeId}`, ua: "desktop" },
+    { url: `https://www.douyin.com/video/${awemeId}`, ua: "desktop" },
   ];
 
   try {
-    for (const url of candidates) {
+    for (const { url, ua } of candidates) {
+      // 根据目标域名设置对应 UA：iesdouyin 用移动端 UA 才能拿到 SSR 内嵌数据
+      try {
+        await page.setUserAgent(ua === "mobile" ? MOBILE_UA : DESKTOP_UA);
+      } catch (uaErr) {
+        logger.warn("aweme-detail", `设置 UA 失败 ${url}:`, (uaErr as Error)?.message ?? uaErr);
+      }
+
       // 导航，保留 response 以便从初始 HTML 提取 _ROUTER_DATA
       let response: import("puppeteer-core").HTTPResponse | null = null;
       try {
@@ -283,12 +308,19 @@ export async function loadRouterDataViaBrowser(
       if (response) {
         try {
           const html = await response.text();
-          const rd = extractRouterData(html);
-          if (rd) {
-            const item = findItemInRouterData(rd);
-            if (item) {
-              logger.info("aweme-detail", `浏览器兜底命中(response _ROUTER_DATA) ${url}`);
-              return item;
+          if (isWafResponse(html)) {
+            logger.warn("aweme-detail", `浏览器兜底遇 WAF 挑战页 ${url}`);
+          } else {
+            const rd = extractRouterData(html);
+            if (rd) {
+              const item = findItemInRouterData(rd);
+              if (item) {
+                logger.info("aweme-detail", `浏览器兜底命中(response _ROUTER_DATA) ${url}`);
+                return item;
+              }
+              logger.warn("aweme-detail", `浏览器兜底 response _ROUTER_DATA 未解析出 item ${url}`);
+            } else {
+              logger.warn("aweme-detail", `浏览器兜底 response 无 _ROUTER_DATA ${url}`);
             }
           }
         } catch (bodyErr) {
@@ -300,12 +332,17 @@ export async function loadRouterDataViaBrowser(
         }
       }
 
-      // 2) 等待 SPA 客户端重定向/ hydration 稳定（常见从 /note 跳到 /video）
-      await new Promise((r) => setTimeout(r, 600));
-      try {
-        await page.waitForFunction(() => document.readyState === "complete", { timeout: 5000 });
-      } catch {
-        // 超时也继续，下面 evaluate 仍有兜底
+      // 2) 等待 hydration / SPA 导航稳定
+      if (ua === "desktop") {
+        await navigateAndWait(page, url, 15000);
+      } else {
+        // 移动端分享页：给 _ROUTER_DATA 脚本一点时间解析到 window
+        await new Promise((r) => setTimeout(r, 800));
+        try {
+          await page.waitForFunction(() => document.readyState === "complete", { timeout: 5000 });
+        } catch {
+          /* 超时继续 */
+        }
       }
 
       // 3) 尝试读取当前 window._ROUTER_DATA / 内联 script
@@ -315,7 +352,7 @@ export async function loadRouterDataViaBrowser(
       } catch (evalErr) {
         logger.warn(
           "aweme-detail",
-          `读取 _ROUTER_DATA 异常（尝试 fiber 兜底）:`,
+          `读取 _ROUTER_DATA 异常 ${url}（尝试 fiber 兜底）:`,
           (evalErr as Error)?.message ?? evalErr
         );
       }
@@ -329,7 +366,7 @@ export async function loadRouterDataViaBrowser(
         logger.warn("aweme-detail", `浏览器兜底读取到 _ROUTER_DATA 但未解析出 item ${url}`);
       }
 
-      // 4) _ROUTER_DATA 未命中：遍历 fiber 兜底（SPA 数据可能只在 fiber 中）
+      // 4) _ROUTER_DATA 未命中：遍历 fiber 兜底（桌面端 SPA 数据可能只在 fiber 中）
       try {
         const fiberItem = await page.evaluate(extractItemFromFiberInPage, awemeId);
         if (fiberItem) {
@@ -339,12 +376,14 @@ export async function loadRouterDataViaBrowser(
       } catch (fiberErr) {
         logger.warn(
           "aweme-detail",
-          `fiber 兜底异常（尝试下一候选）:`,
+          `fiber 兜底异常 ${url}（尝试下一候选）:`,
           (fiberErr as Error)?.message ?? fiberErr
         );
         // 导航中途 context 销毁时继续下一候选
         continue;
       }
+
+      logger.warn("aweme-detail", `浏览器兜底当前候选未命中 ${url}`);
     }
 
     logger.warn("aweme-detail", "浏览器兜底未找到 item");
