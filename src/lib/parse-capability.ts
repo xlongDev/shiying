@@ -7,6 +7,7 @@
  * 暴露该能力判断，供 /api/health 上报与 /api/parse 的 fail-fast 错误使用。
  */
 import { findChromeExecutable } from "./chrome-finder";
+import { config } from "./config";
 
 export interface ParseCapability {
   /** 系统是否可找到 Chrome（决定浏览器兜底是否可用）。 */
@@ -22,7 +23,7 @@ export interface ParseCapability {
 
 export async function getParseCapability(): Promise<ParseCapability> {
   const chromeAvailable = (await findChromeExecutable()) !== null;
-  const serviceConfigured = Boolean(process.env.LIVE_PHOTO_SERVICE_URL);
+  const serviceConfigured = config.services.livePhotoServiceUrl != null;
   return {
     chromeAvailable,
     serviceConfigured,

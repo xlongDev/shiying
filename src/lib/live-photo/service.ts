@@ -12,12 +12,13 @@
  * 且携带 Bearer Token 鉴权，无 SSRF 面。
  */
 import { logger } from "../logger";
+import { config } from "../config";
 import type { ResolvedLivePhoto } from "./types";
 
 export async function resolveLivePhotosViaService(awemeId: string): Promise<ResolvedLivePhoto[]> {
-  const base = process.env.LIVE_PHOTO_SERVICE_URL;
+  const base = config.services.livePhotoServiceUrl;
   if (!base) return [];
-  const token = process.env.LIVE_PHOTO_SERVICE_TOKEN;
+  const token = config.services.livePhotoServiceToken;
   const url = `${base.replace(/\/+$/, "")}/parse-live-photo?awemeId=${awemeId}`;
   const headers: Record<string, string> = {};
   if (token) headers.authorization = `Bearer ${token}`;

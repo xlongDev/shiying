@@ -1,4 +1,5 @@
 /* eslint-disable no-console -- 本模块是 console 的统一封装层 */
+import { config } from "./config";
 /**
  * 轻量分级日志器（零第三方依赖）。
  *
@@ -23,7 +24,7 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 function getThreshold(): number {
-  const raw = (process.env.LOG_LEVEL ?? "info").toLowerCase();
+  const raw = config.logging.level;
   return LEVEL_ORDER[raw as LogLevel] ?? LEVEL_ORDER.info;
 }
 

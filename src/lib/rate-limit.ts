@@ -15,6 +15,7 @@
  * `pnpm add @upstash/ratelimit @upstash/redis`。
  */
 import { logger } from "./logger";
+import { config } from "./config";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -119,8 +120,8 @@ async function getLimiter(limit: number, windowMs: number): Promise<RateLimiter>
   if (pending) return pending;
 
   const p = (async () => {
-    const url = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const url = config.upstash.url;
+    const token = config.upstash.token;
     if (url && token) {
       try {
         const rl = await createUpstashLimiter(url, token, limit, windowMs);

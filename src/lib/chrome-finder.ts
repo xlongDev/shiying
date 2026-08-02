@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { logger } from "./logger";
+import { config } from "./config";
 
 /**
  * 查找系统中可用的 Chrome/Chromium 可执行文件路径。
@@ -17,7 +18,7 @@ import { logger } from "./logger";
  *     LIVE_PHOTO_SERVICE_URL（部署在国内 IP 的 a_bogus 签名桥）才能解析。
  */
 export async function findChromeExecutable(): Promise<string | null> {
-  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH;
+  const envPath = config.chrome.executablePath;
   if (envPath && fs.existsSync(envPath)) return envPath;
 
   const platform = os.platform();
@@ -33,9 +34,9 @@ export async function findChromeExecutable(): Promise<string | null> {
     );
   } else if (platform === "win32") {
     const programFiles = [
-      process.env.LOCALAPPDATA,
-      process.env.PROGRAMFILES,
-      process.env["PROGRAMFILES(X86)"],
+      config.chrome.localAppData,
+      config.chrome.programFiles,
+      config.chrome.programFilesX86,
     ].filter(Boolean) as string[];
     for (const base of programFiles) {
       candidates.push(

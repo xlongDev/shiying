@@ -17,6 +17,7 @@
 import { MOBILE_UA, extractRouterData, findItemInRouterData } from "../parser/extract";
 import { acquirePage, releasePage } from "../browser-pool";
 import { logger } from "../logger";
+import { config } from "../config";
 import { resolveLivePhotosViaService } from "./service";
 import { resolveLivePhotosViaSsr } from "./ssr";
 import { extractPhotosFromPage, extractLivePhotosFromRouterData, navigateNotePage } from "./chrome";
@@ -27,7 +28,7 @@ import type { ResolvedLivePhoto, LivePhotoPresence, PagePhotoStats } from "./typ
  * 单图实况照片动态短片 URL 提取
  */
 export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string | null> {
-  if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return null;
+  if (config.features.disableLivePhotoResolve) return null;
 
   // 主路径（若已配置国内服务）：转发至国内节点用 a_bogus 签名解析（零浏览器，可覆盖 slides）
   const svcStart = Date.now();
@@ -111,7 +112,7 @@ export async function resolveLivePhotosForSlides(
   awemeId: string,
   _imageCount: number
 ): Promise<ResolvedLivePhoto[]> {
-  if (process.env.DISABLE_LIVE_PHOTO_RESOLVE === "true") return [];
+  if (config.features.disableLivePhotoResolve) return [];
 
   // 主路径（若已配置国内服务）：转发至国内节点用 a_bogus 签名解析。
   // slides 多图实况的动态短片 URL 不在 SSR 中，且海外直连被地理封锁，
