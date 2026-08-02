@@ -13,6 +13,7 @@
  */
 import { logger } from "../logger";
 import { config } from "../config";
+import { fetchWithTimeout } from "../http";
 import type { ResolvedLivePhoto } from "./types";
 
 export async function resolveLivePhotosViaService(awemeId: string): Promise<ResolvedLivePhoto[]> {
@@ -24,10 +25,11 @@ export async function resolveLivePhotosViaService(awemeId: string): Promise<Reso
   if (token) headers.authorization = `Bearer ${token}`;
 
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
-    const res = await fetch(url, { headers, redirect: "follow", signal: ctrl.signal });
-    clearTimeout(timer);
+    const res = await fetchWithTimeout(url, {
+      timeoutMs: 15000,
+      headers,
+      redirect: "follow",
+    });
     if (!res.ok) {
       logger.warn("live-photo-svc", `国内服务返回 HTTP ${res.status}`);
       return [];

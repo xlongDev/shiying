@@ -91,6 +91,9 @@ export async function getSharedBrowser(): Promise<import("puppeteer-core").Brows
         headless: true,
         executablePath: chromePath,
         args: CHROME_ARGS,
+        // 显式冷启动超时：防止系统 Chrome 在异常环境下挂起，避免 puppeteerSemaphore
+        // 许可被永久占用而导致整实例解析死锁（acquirePage 在获取许可后才等待启动）。
+        timeout: 30000,
       });
       b.on("disconnected", () => {
         // 进程崩溃：置空，下次请求重启动

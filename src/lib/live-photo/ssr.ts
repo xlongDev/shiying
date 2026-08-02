@@ -12,6 +12,7 @@
 import { MOBILE_UA, extractRouterData } from "../parser/extract";
 import { fetchAwemeItem } from "../parser/aweme-detail";
 import { logger } from "../logger";
+import { fetchWithTimeout } from "../http";
 import { isWafHtml, scanLivePhotosInRouterData, scanLivePhotosInItem } from "./detect";
 import type { ResolvedLivePhoto } from "./types";
 
@@ -30,7 +31,8 @@ export async function resolveLivePhotosViaSsr(awemeId: string): Promise<Resolved
   ];
   for (const shareUrl of candidates) {
     try {
-      const res = await fetch(shareUrl, {
+      const res = await fetchWithTimeout(shareUrl, {
+        timeoutMs: 15000,
         headers: {
           "user-agent": MOBILE_UA,
           referer: "https://www.douyin.com/",

@@ -13,6 +13,7 @@
 import { signAwemeDetail } from "@/lib/abogus";
 import { loadRouterDataViaBrowser } from "../browser-router-data";
 import { logger } from "@/lib/logger";
+import { fetchWithTimeout } from "../http";
 import { MOBILE_UA, extractRouterData, findItemInRouterData } from "./extract";
 
 /** 判断响应是否为抖音 WAF JS Challenge 页（非正常的 SSR 分享页） */
@@ -35,7 +36,8 @@ async function fetchAwemeItemFromSsr(awemeId: string): Promise<Record<string, un
 
   for (const shareUrl of candidates) {
     try {
-      const res = await fetch(shareUrl, {
+      const res = await fetchWithTimeout(shareUrl, {
+        timeoutMs: 15000,
         headers: {
           "user-agent": MOBILE_UA,
           accept: "text/html",
@@ -71,7 +73,8 @@ async function fetchAwemeItemFromApi(awemeId: string): Promise<Record<string, un
   try {
     // 合成 ttwid 足以通过多数场景；真实 ttwid 需要额外请求首页，反而增加被 WAF 的概率。
     const sig = await signAwemeDetail(awemeId, { forceSyntheticTtwid: true });
-    const res = await fetch(sig.url, {
+    const res = await fetchWithTimeout(sig.url, {
+      timeoutMs: 15000,
       headers: sig.headers,
       redirect: "follow",
     });
