@@ -11,7 +11,8 @@
  *     下内存不共享、限流可被轮换实例绕过的问题。
  *
  * 依赖说明：@upstash/ratelimit / @upstash/redis 为**可选依赖**，仅在启用 Upstash 时需要。
- * 采用动态导入，未安装时自动回退内存限流，不影响安装与构建。启用时请先
+ * 通过 `new Function` 运行时加载，构建工具不会静态解析该 import，因此未安装包
+ * 也能正常构建；运行时若包缺失则自动回退内存限流。启用时请先
  * `pnpm add @upstash/ratelimit @upstash/redis`。
  */
 import { logger } from "./logger";
@@ -72,27 +73,52 @@ class MemoryRateLimiter implements RateLimiter {
 }
 
 /**
+ * 运行时动态加载可选模块，避免 Next.js / webpack / Turbopack 在构建阶段静态分析
+ * import() 目标并在包未安装时报错。
+ */
+async function loadOptionalModule(name: string): Promise<unknown> {
+  try {
+    const runtimeImport = new Function("path", "return import(path)") as (
+      path: string
+    ) => Promise<unknown>;
+    return await runtimeImport(name);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 创建 Upstash Ratelimit 后端（滑动窗口）。
- * 通过动态导入避免未安装 @upstash/* 时类型/构建报错；缺失依赖时抛出，由调用方回退内存。
+ * 未安装依赖或初始化失败时返回 null，由调用方回退内存限流。
  */
 async function createUpstashLimiter(
   url: string,
   token: string,
   limit: number,
   windowMs: number
-): Promise<RateLimiter> {
-  // `as string` 使 specifier 成为非字面量，TS 不再尝试解析模块（无需安装即可编译）。
-  const ratelimitMod: any = await import("@upstash/ratelimit" as string).catch(() => null);
-  const redisMod: any = await import("@upstash/redis" as string).catch(() => null);
+): Promise<RateLimiter | null> {
+  const [ratelimitMod, redisMod] = await Promise.all([
+    loadOptionalModule("@upstash/ratelimit"),
+    loadOptionalModule("@upstash/redis"),
+  ]);
 
-  if (!ratelimitMod?.Ratelimit || !redisMod?.Redis) {
-    throw new Error("未安装 @upstash/ratelimit / @upstash/redis");
+  const Ratelimit = (ratelimitMod as any)?.Ratelimit;
+  const slidingWindow = (ratelimitMod as any)?.slidingWindow;
+  const Redis = (redisMod as any)?.Redis;
+
+  if (!Ratelimit || !Redis || !slidingWindow) {
+    logger.warn(
+      "rate-limit",
+      "未检测到 @upstash/ratelimit / @upstash/redis，回退内存限流。" +
+        "如需跨实例限流请先 pnpm add @upstash/ratelimit @upstash/redis"
+    );
+    return null;
   }
 
-  const redis = new redisMod.Redis({ url, token });
-  const rl = new ratelimitMod.Ratelimit({
+  const redis = new Redis({ url, token });
+  const rl = new Ratelimit({
     redis,
-    limiter: ratelimitMod.Ratelimit.slidingWindow(limit, `${Math.round(windowMs / 1000)} s`),
+    limiter: slidingWindow(limit, `${Math.round(windowMs / 1000)} s`),
     prefix: "shiying_rl",
     analytics: false,
   });
@@ -120,16 +146,13 @@ async function getLimiter(limit: number, windowMs: number): Promise<RateLimiter>
   if (pending) return pending;
 
   const p = (async () => {
-    const url = config.upstash.url;
-    const token = config.upstash.token;
+    const { url, token } = config.upstash;
     if (url && token) {
-      try {
-        const rl = await createUpstashLimiter(url, token, limit, windowMs);
+      const rl = await createUpstashLimiter(url, token, limit, windowMs);
+      if (rl) {
         limiterCache.set(cacheKey, rl);
         logger.info("rate-limit", "已启用 Upstash 跨实例限流");
         return rl;
-      } catch (err) {
-        logger.warn("rate-limit", "Upstash 初始化失败，回退内存限流:", err);
       }
     }
     const mem = new MemoryRateLimiter(limit, windowMs);
