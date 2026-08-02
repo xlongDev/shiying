@@ -46,7 +46,7 @@
 
 - Node.js ≥ 20（推荐 22）
 - pnpm **11.9.0**（由 `packageManager` 字段锁定）
-- 系统 Chrome（实况解析用，`chrome-finder` 自动探测，也可用 `CHROME_PATH` 指定）
+- **系统 Chrome（核心依赖）**：不仅实况解析需要，`/api/parse` 主解析在 SSR 被 WAF / 地理封锁（如海外 IP）时，也会回退到「真实 Chrome + iesdouyin 移动端 SSR」提取完整数据。由 `chrome-finder` 自动探测，也可用 `CHROME_PATH` 指定。
 - `ffmpeg`（服务端实况合成用，由部署环境 PATH 提供，或置于 `bin/ffmpeg`）
 
 ### 安装
@@ -135,8 +135,8 @@ src/
 
 ## 🚢 部署
 
-- **Vercel**：直接导入仓库一键部署；无需额外密钥即可运行基础解析。
-- **自托管**：`pnpm build && pnpm start`。需保证运行环境提供 **Chrome**（实况解析）与 **ffmpeg**（服务端合成）。
+- **Vercel**：直接导入仓库一键部署；无需额外密钥即可运行基础解析。但 Vercel 等**无头环境不提供 Chrome**，因此 `/api/parse` 的浏览器兜底与实况照片解析会降级失效——海外 IP / 被 WAF 拦截的内容可能解析失败。如需完整能力，请自托管并安装 Chrome。
+- **自托管**：`pnpm build && pnpm start`。需保证运行环境提供 **Chrome**（主解析兜底 + 实况解析）与 **ffmpeg**（服务端合成）。
 - 媒体代理内置 **SSRF 防护**（`src/lib/ssrf.ts`），并带**速率限制**（`src/lib/rate-limit.ts`）。
 
 ## ⚙️ 环境变量

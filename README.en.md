@@ -46,7 +46,7 @@ The parser uses a **two-phase** flow: return base info fast, then load Live Phot
 
 - Node.js ≥ 20 (22 recommended)
 - pnpm **11.9.0** (pinned via the `packageManager` field)
-- System Chrome (for Live Photo parsing; auto-detected by `chrome-finder`, or set `CHROME_PATH`)
+- **System Chrome (core dependency)**: not only for Live Photo parsing — when the SSR path is blocked by WAF / geo-blocking (e.g. overseas IP), `/api/parse` also falls back to "real Chrome + iesdouyin mobile SSR" to fetch full data. Auto-detected by `chrome-finder`, or set `CHROME_PATH`.
 - `ffmpeg` (for server-side Live Photo composition; provided via PATH in deployment, or placed at `bin/ffmpeg`)
 
 ### Install
@@ -135,8 +135,8 @@ src/
 
 ## 🚢 Deployment
 
-- **Vercel**: import the repo for one-click deploy; no secrets required for base parsing.
-- **Self-hosted**: `pnpm build && pnpm start`. Ensure the runtime provides **Chrome** (Live parsing) and **ffmpeg** (server compose).
+- **Vercel**: import the repo for one-click deploy; no secrets required for base parsing. However, headless platforms like Vercel **do not provide Chrome**, so `/api/parse`'s browser fallback and Live Photo parsing degrade / fail — content blocked by WAF or overseas IPs may fail to parse. For full capability, self-host with Chrome installed.
+- **Self-hosted**: `pnpm build && pnpm start`. Ensure the runtime provides **Chrome** (main-parse fallback + Live parsing) and **ffmpeg** (server compose).
 - Media proxies ship with **SSRF protection** (`src/lib/ssrf.ts`) and **rate limiting** (`src/lib/rate-limit.ts`).
 
 ## ⚙️ Environment Variables
