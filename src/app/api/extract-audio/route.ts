@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
           videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}-v2.mp4`);
 
           const snssdkUrl = `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`;
-          console.log(`[extract-audio] retrying with snssdk: ${snssdkUrl}`);
+          logger.info("extract-audio", `retrying with snssdk: ${snssdkUrl}`);
 
           const snssdkRes = await fetch(snssdkUrl, {
             headers: buildUpstreamHeaders(snssdkUrl),
@@ -156,7 +156,7 @@ export async function GET(req: NextRequest) {
               videoTempPath
             );
             videoStats = fs.statSync(videoTempPath);
-            console.log(`[extract-audio] snssdk retry downloaded ${videoStats.size} bytes`);
+            logger.info("extract-audio", `snssdk retry downloaded ${videoStats.size} bytes`);
           }
         } catch (retryErr) {
           logger.error("extract-audio", "snssdk retry failed:", retryErr);

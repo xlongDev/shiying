@@ -34,7 +34,7 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
   const svcStart = Date.now();
   const svcLives = await resolveLivePhotosViaService(awemeId);
   if (svcLives.length > 0) {
-    console.log(`[live-photo] 单图实况 国内服务解析成功，耗时 ${Date.now() - svcStart}ms`);
+    logger.info("live-photo", `单图实况 国内服务解析成功，耗时 ${Date.now() - svcStart}ms`);
     return svcLives[0].videoUrl;
   }
 
@@ -42,7 +42,7 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
   const apiStart = Date.now();
   const apiLives = await resolveLivePhotosViaSsr(awemeId);
   if (apiLives.length > 0) {
-    console.log(`[live-photo] 单图实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms`);
+    logger.info("live-photo", `单图实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms`);
     return apiLives[0].videoUrl;
   }
   logger.warn("live-photo", "单图实况 SSR 未命中，回退无头浏览器");
@@ -63,8 +63,9 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
       const { lives, item, hasData } = await extractLivePhotosFromRouterData(page);
       // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
       if (hasData && item && isDefinitelyStaticItem(item)) {
-        console.log(
-          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
+        logger.info(
+          "live-photo",
+          `单图实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
         );
         return null;
       }
@@ -77,14 +78,16 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
       }
       // 真静态帖短路（fiber）：已找到图片数组但里面一张实况都没有，无需重试
       if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
-        console.log(
-          `[live-photo] 单图实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
+        logger.info(
+          "live-photo",
+          `单图实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 无实况`
         );
         return null;
       }
       if (finalLives.length > 0) {
-        console.log(
-          `[live-photo] 单图实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，结果: 有实况`
+        logger.info(
+          "live-photo",
+          `单图实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，结果: 有实况`
         );
         return finalLives[0].videoUrl;
       }
@@ -98,7 +101,7 @@ export async function resolveLivePhotoVideoUrl(awemeId: string): Promise<string 
     await releasePage(page);
   }
 
-  console.log(`[live-photo] 单图实况探测完成，耗时 ${Date.now() - startTime}ms，结果: 无实况`);
+  logger.info("live-photo", `单图实况探测完成，耗时 ${Date.now() - startTime}ms，结果: 无实况`);
   return lastResult.length > 0 ? lastResult[0].videoUrl : null;
 }
 
@@ -120,8 +123,9 @@ export async function resolveLivePhotosForSlides(
   const svcStart = Date.now();
   const svcLives = await resolveLivePhotosViaService(awemeId);
   if (svcLives.length > 0) {
-    console.log(
-      `[live-photo-slides] 混合实况 国内服务解析成功，耗时 ${Date.now() - svcStart}ms，检测到 ${svcLives.length} 张实况照片`
+    logger.info(
+      "live-photo-slides",
+      `混合实况 国内服务解析成功，耗时 ${Date.now() - svcStart}ms，检测到 ${svcLives.length} 张实况照片`
     );
     return svcLives;
   }
@@ -130,8 +134,9 @@ export async function resolveLivePhotosForSlides(
   const apiStart = Date.now();
   const apiLives = await resolveLivePhotosViaSsr(awemeId);
   if (apiLives.length > 0) {
-    console.log(
-      `[live-photo-slides] 混合实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms，检测到 ${apiLives.length} 张实况照片`
+    logger.info(
+      "live-photo-slides",
+      `混合实况 SSR 解析成功，耗时 ${Date.now() - apiStart}ms，检测到 ${apiLives.length} 张实况照片`
     );
     return apiLives;
   }
@@ -157,8 +162,9 @@ export async function resolveLivePhotosForSlides(
       let rdResult = await extractLivePhotosFromRouterData(page);
       // 真静态帖短路：_ROUTER_DATA 完整且 images 中无任何实况标记，直接结束
       if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
-        console.log(
-          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
+        logger.info(
+          "live-photo-slides",
+          `混合实况探测（第${attempt}次）命中真静态帖短路(_ROUTER_DATA)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
         );
         return [];
       }
@@ -171,8 +177,9 @@ export async function resolveLivePhotosForSlides(
       }
       // 真静态帖短路（fiber）：已找到图片数组但里面一张实况都没有，无需重试
       if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
-        console.log(
-          `[live-photo-slides] 混合实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
+        logger.info(
+          "live-photo-slides",
+          `混合实况探测（第${attempt}次）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，耗时 ${Date.now() - startTime}ms，结果: 0 张实况照片`
         );
         return [];
       }
@@ -195,8 +202,9 @@ export async function resolveLivePhotosForSlides(
             .catch(() => {});
           rdResult = await extractLivePhotosFromRouterData(page);
           if (rdResult.hasData && rdResult.item && isDefinitelyStaticItem(rdResult.item)) {
-            console.log(
-              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路(_ROUTER_DATA)，结果: 0 张实况照片`
+            logger.info(
+              "live-photo-slides",
+              `备用路径（${paths[p]}）命中真静态帖短路(_ROUTER_DATA)，结果: 0 张实况照片`
             );
             return [];
           }
@@ -208,8 +216,9 @@ export async function resolveLivePhotosForSlides(
             fiberStats = pageResult.stats;
           }
           if (fiberStats?.hasImageArray && fiberStats.liveCountInMaxArray === 0) {
-            console.log(
-              `[live-photo-slides] 备用路径（${paths[p]}）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，结果: 0 张实况照片`
+            logger.info(
+              "live-photo-slides",
+              `备用路径（${paths[p]}）命中真静态帖短路(fiber: ${fiberStats.maxImageArrayLength}张图/0实况)，结果: 0 张实况照片`
             );
             return [];
           }
@@ -218,8 +227,9 @@ export async function resolveLivePhotosForSlides(
         }
       }
       if (lives.length > 0) {
-        console.log(
-          `[live-photo-slides] 混合实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，检测到 ${lives.length} 张实况照片`
+        logger.info(
+          "live-photo-slides",
+          `混合实况探测完成（第${attempt}次），耗时 ${Date.now() - startTime}ms，检测到 ${lives.length} 张实况照片`
         );
         return lives;
       }
@@ -233,8 +243,9 @@ export async function resolveLivePhotosForSlides(
     await releasePage(page);
   }
 
-  console.log(
-    `[live-photo-slides] 混合实况探测完成，耗时 ${Date.now() - startTime}ms，检测到 0 张实况照片（已重试 ${MAX_RETRIES} 次）`
+  logger.info(
+    "live-photo-slides",
+    `混合实况探测完成，耗时 ${Date.now() - startTime}ms，检测到 0 张实况照片（已重试 ${MAX_RETRIES} 次）`
   );
   return lastResult;
 }

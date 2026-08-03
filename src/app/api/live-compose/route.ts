@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
     outputTempPath = path.join(os.tmpdir(), `live-output-${Date.now()}.mp4`);
 
     // ---- Step 1: 下载视频流 ----
-    console.log(`[live-compose] downloading video from: ${videoUrl.substring(0, 120)}`);
+    logger.info("live-compose", `downloading video from: ${videoUrl.substring(0, 120)}`);
     const videoRes = await fetch(videoUrl, {
       headers: buildUpstreamHeaders(videoUrl),
       redirect: "follow",
@@ -90,10 +90,10 @@ export async function GET(req: NextRequest) {
     if (videoSize < 1024) {
       return NextResponse.json({ ok: false, error: "下载的短片文件为空" }, { status: 502 });
     }
-    console.log(`[live-compose] video downloaded: ${(videoSize / 1024).toFixed(1)} KB`);
+    logger.info("live-compose", `video downloaded: ${(videoSize / 1024).toFixed(1)} KB`);
 
     // ---- Step 2: 下载音频流 ----
-    console.log(`[live-compose] downloading audio from: ${audioUrl.substring(0, 120)}`);
+    logger.info("live-compose", `downloading audio from: ${audioUrl.substring(0, 120)}`);
     const audioRes = await fetch(audioUrl, {
       headers: buildUpstreamHeaders(audioUrl),
       redirect: "follow",
@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
       });
       return new NextResponse(videoBuffer, { status: 200, headers: respHeaders });
     }
-    console.log(`[live-compose] audio downloaded: ${(audioSize / 1024).toFixed(1)} KB`);
+    logger.info("live-compose", `audio downloaded: ${(audioSize / 1024).toFixed(1)} KB`);
 
     // ---- Step 3: ffmpeg 合成（并发受信号量限制） ----
     // 视频流无损复制 (-c:v copy)，音频编码为 AAC，以音频时长为准
@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
         { status: 500 }
       );
     }
-    console.log(`[live-compose] output: ${(outputSize / 1024).toFixed(1)} KB`);
+    logger.info("live-compose", `output: ${(outputSize / 1024).toFixed(1)} KB`);
 
     // ---- Step 4: 返回结果 ----
     const outputBuffer = fs.readFileSync(outputTempPath);

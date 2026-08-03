@@ -327,7 +327,7 @@ async function navigateNotePage(
   }
   if (!gotoOk) return false;
 
-  console.log(`[live-page] 页面 DOM 加载完成 (${Date.now() - startTime}ms)`);
+  logger.info("live-page", `页面 DOM 加载完成 (${Date.now() - startTime}ms)`);
 
   // 等待 hydration：页面出现图片查看器或视频即代表数据已挂载
   try {
@@ -341,7 +341,7 @@ async function navigateNotePage(
   } catch {
     // 超时也继续，下面仍有固定等待兜底
   }
-  console.log(`[live-page] hydration 检测完成 (${Date.now() - startTime}ms)`);
+  logger.info("live-page", `hydration 检测完成 (${Date.now() - startTime}ms)`);
 
   // 短暂等待 React 完成渲染与数据注入
   await new Promise((r) => setTimeout(r, 500));
@@ -412,7 +412,7 @@ async function navigateNotePage(
     // 超时也继续，下面的遍历仍有兜底
   }
 
-  console.log(`[live-page] 页面完全就绪，总耗时 ${Date.now() - startTime}ms`);
+  logger.info("live-page", `页面完全就绪，总耗时 ${Date.now() - startTime}ms`);
   return true;
 }
 

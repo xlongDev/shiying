@@ -34,6 +34,9 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Coverage gate
+        run: pnpm test:coverage
+
       - name: Format check
         run: pnpm format:check
 

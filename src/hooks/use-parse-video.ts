@@ -29,6 +29,10 @@ export function useParseVideo(resultRef?: React.RefObject<HTMLDivElement | null>
   const { play } = useSound();
 
   const resolveLivePhotos = React.useCallback(async (base: ParsedVideo) => {
+    // 统一收口实况补全的 setVideo：始终清掉 pending/background 标志，仅 livePhotoFailed 由调用方决定。
+    const commit = (patch: Partial<ParsedVideo>) =>
+      setVideo({ ...base, ...patch, livePhotoPending: false, livePhotoBackground: false });
+
     try {
       // silent=true 表示多图 note 的静默后台探测：失败时不展示「探测未完成」面板，
       // 仅静默降级为普通图文（避免对不含实况的普通帖子误报）。
@@ -54,13 +58,7 @@ export function useParseVideo(resultRef?: React.RefObject<HTMLDivElement | null>
           liveData.data &&
           (liveData.data.isMixedLivePhoto || liveData.data.isLivePhoto)
         ) {
-          setVideo({
-            ...base,
-            ...liveData.data,
-            livePhotoPending: false,
-            livePhotoBackground: false,
-            livePhotoFailed: false,
-          });
+          commit({ ...liveData.data, livePhotoFailed: false });
           return;
         }
       } else if (isSingleNote) {
@@ -76,51 +74,17 @@ export function useParseVideo(resultRef?: React.RefObject<HTMLDivElement | null>
         });
         const liveData = await liveRes.json();
         if (liveData.ok && liveData.data && liveData.data.isLivePhoto) {
-          setVideo({
-            ...base,
-            ...liveData.data,
-            livePhotoPending: false,
-            livePhotoBackground: false,
-            livePhotoFailed: false,
-          });
+          commit({ ...liveData.data, livePhotoFailed: false });
           return;
         }
       }
 
       // 探测成功但未获取到实况 → 静默模式直接降级，非静默模式展示「重试」入口
-      if (silent) {
-        setVideo({
-          ...base,
-          livePhotoPending: false,
-          livePhotoBackground: false,
-          livePhotoFailed: false,
-        });
-      } else {
-        setVideo({
-          ...base,
-          livePhotoPending: false,
-          livePhotoBackground: false,
-          livePhotoFailed: true,
-        });
-      }
+      commit({ livePhotoFailed: silent ? false : true });
     } catch (err) {
       logger.warn("live-photo", "异步实况解析失败:", err);
       // 静默模式：catch 也仅降级；非静默模式：标记失败（展示重试入口）
-      if (base.livePhotoBackground) {
-        setVideo({
-          ...base,
-          livePhotoPending: false,
-          livePhotoBackground: false,
-          livePhotoFailed: false,
-        });
-      } else {
-        setVideo({
-          ...base,
-          livePhotoPending: false,
-          livePhotoBackground: false,
-          livePhotoFailed: true,
-        });
-      }
+      commit({ livePhotoFailed: base.livePhotoBackground ? false : true });
     }
   }, []);
 
