@@ -59,8 +59,8 @@ export async function GET(req: NextRequest) {
           const loc = probe.headers.get("location");
           if (loc) finalUrl = new URL(loc, targetUrl).toString();
         }
-      } catch {
-        // ignore, use original URL
+      } catch (e) {
+        logger.warn("proxy-media", "play URL probe failed, fallback to original:", e);
       }
     }
 

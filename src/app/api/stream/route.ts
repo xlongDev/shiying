@@ -57,8 +57,8 @@ export async function GET(req: NextRequest) {
           const loc = probe.headers.get("location");
           if (loc) finalUrl = new URL(loc, targetUrl).toString();
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        logger.warn("stream", "play URL probe failed, fallback to original:", e);
       }
     }
 

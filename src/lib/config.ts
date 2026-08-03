@@ -80,6 +80,14 @@ export const config = {
     get disableLivePhotoResolve(): boolean {
       return readBool("DISABLE_LIVE_PHOTO_RESOLVE");
     },
+    /**
+     * 是否开放诊断路由 /api/abogus-test（默认关闭）。
+     * 该路由会真实调用上游 aweme/detail 并返回内部签名细节（ttwid 来源、status_code 等），
+     * 仅用于部署期排查 Route C 可用性，生产环境应关闭以缩减攻击面与信息泄露。
+     */
+    get enableDiagnostics(): boolean {
+      return readBool("ENABLE_DIAGNOSTICS");
+    },
   },
 };
 

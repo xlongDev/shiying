@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardRateLimit } from "@/lib/rate-limit-guard";
+import { config } from "@/lib/config";
 import { signAwemeDetail } from "@/lib/abogus";
 
 // 纯 Node / 服务端运行时；a_bogus 生成依赖 node:vm（不需要浏览器）。
@@ -68,6 +69,10 @@ async function attempt(awemeId: string, forceSyntheticTtwid: boolean): Promise<A
  *
  * 用法：GET /api/abogus-test?awemeId=<数字>
  *
+ * 安全：默认关闭，需设 ENABLE_DIAGNOSTICS=true 才响应（否则返回 404）。
+ * 该路由会真实调用上游 aweme/detail 并返回内部签名细节，仅用于部署期排查，
+ * 生产环境应关闭以缩减攻击面与信息泄露。
+ *
  * 关键对照：同一请求分别用「真实 ttwid」（首页 bootstrap）与「合成 ttwid」各打一次
  * aweme/detail，结果并列返回，用于隔离两种失败原因：
  *   - 真实 ttwid 失败、合成 ttwid 成功 → 仅缺 cookie，补 ttwid 即可解锁
@@ -76,6 +81,11 @@ async function attempt(awemeId: string, forceSyntheticTtwid: boolean): Promise<A
  * 这是诊断工具，不是生产路径；上线稳定后可删除。
  */
 export async function GET(req: NextRequest) {
+  // 诊断路由默认关闭：未设 ENABLE_DIAGNOSTICS=true 时返回 404，不暴露该路由存在。
+  if (!config.features.enableDiagnostics) {
+    return NextResponse.json({ ok: false, error: "诊断路由未启用" }, { status: 404 });
+  }
+
   const blocked = await guardRateLimit(req, "abogus-test", 10, 60_000);
   if (blocked) return blocked;
 
