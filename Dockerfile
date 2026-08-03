@@ -10,9 +10,9 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# 系统依赖：Chromium（无头浏览器兜底）/ ffmpeg（服务端音频提取）
+# 系统依赖：Chromium（无头浏览器兜底）/ ffmpeg（服务端音频提取）/ curl（容器健康检查）
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium ffmpeg \
+  && apt-get install -y --no-install-recommends chromium ffmpeg curl \
   && rm -rf /var/lib/apt/lists/*
 
 # pnpm 由 corepack 提供，版本锁定于 package.json 的 packageManager 字段
@@ -29,4 +29,10 @@ RUN pnpm build
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
+
+# 健康检查：/api/health 始终返回 2xx，作为存活探针；
+# start-period 预留 Next.js 冷启动与首请求 JIT 编译时间。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -fsS http://localhost:3000/api/health || exit 1
+
 CMD ["pnpm", "start"]
