@@ -83,7 +83,6 @@ export function FaqSection() {
         className="text-center mb-8"
       >
         <h2 className="text-2xl sm:text-3xl font-bold mb-2">常见问题</h2>
-        <p className="text-sm text-muted-foreground">点击展开查看</p>
       </motion.div>
 
       <div className="space-y-3">

@@ -39,10 +39,7 @@ export function StepsSection() {
         <p className="text-muted-foreground">简单到不需要教程</p>
       </motion.div>
 
-      <div className="relative grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-        {/* 连接线 */}
-        <div className="hidden md:block absolute top-12 left-[16%] right-[16%] h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
         {STEPS.map((s, i) => (
           <motion.div
             key={s.step}
@@ -58,8 +55,8 @@ export function StepsSection() {
           >
             <div className="relative mb-5">
               <motion.div
-                whileHover={{ scale: 1.1, rotate: 5 }}
-                className="h-24 w-24 rounded-3xl glass-strong flex items-center justify-center relative z-10"
+                whileHover={{ scale: 1.08, rotate: 5 }}
+                className="h-24 w-24 rounded-3xl glass flex items-center justify-center relative z-10 border border-white/15"
               >
                 <s.icon className="h-10 w-10 text-primary" strokeWidth={1.8} />
               </motion.div>

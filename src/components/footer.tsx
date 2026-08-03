@@ -3,7 +3,17 @@
 import * as React from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { Heart } from "lucide-react";
+import { BookText, Heart } from "lucide-react";
+
+const VERSION = "v0.2.0";
+const REPO_URL = "https://github.com/xlongDev/shiying";
+const DOCS_URL = "https://github.com/xlongDev/shiying#readme";
+
+type HealthState = {
+  ok: boolean;
+  degraded: boolean;
+  message: string;
+} | null;
 
 function Logo({ className }: { className?: string }) {
   return (
@@ -26,7 +36,63 @@ function GithubIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * 信息徽章 — 用于版本号、只读状态展示。
+ * 不带外链语义，避免用户误以为是可点击链接。
+ */
+function MetaBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-background/60 border border-border/50 backdrop-blur-sm text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * 信息链接 — 文档 / GitHub 等可点击项。
+ */
+function MetaLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <motion.a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      whileHover={{ scale: 1.04 }}
+      whileTap={{ scale: 0.96 }}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-background/60 border border-border/50 backdrop-blur-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+    >
+      {children}
+    </motion.a>
+  );
+}
+
 export function Footer() {
+  const [health, setHealth] = React.useState<HealthState>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: HealthState) => {
+        if (!cancelled && data) setHealth(data);
+      })
+      .catch(() => {
+        // 网络/CORS 等失败时静默降级，保持徽章为「检测中」即可
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isOk = health?.ok && !health.degraded;
+  const statusLabel = !health
+    ? "检测中"
+    : isOk
+      ? "运行正常"
+      : health.degraded
+        ? "降级模式"
+        : "异常";
+
   return (
     <motion.footer
       initial={{ opacity: 0 }}
@@ -49,7 +115,38 @@ export function Footer() {
               </p>
             </div>
 
-            {/* Pills */}
+            {/* Meta — 版本 / 服务状态 / 文档 / GitHub */}
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <MetaBadge>
+                <span className="font-mono text-xs">{VERSION}</span>
+              </MetaBadge>
+              <MetaBadge>
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    !health
+                      ? "bg-muted-foreground animate-pulse"
+                      : isOk
+                        ? "bg-emerald-500"
+                        : "bg-amber-500"
+                  }`}
+                  aria-hidden
+                />
+                <span className="text-xs">服务{statusLabel}</span>
+              </MetaBadge>
+              <MetaLink href={DOCS_URL}>
+                <BookText className="h-3.5 w-3.5" aria-hidden />
+                <span className="text-xs">使用文档</span>
+              </MetaLink>
+              <MetaLink href={REPO_URL}>
+                <GithubIcon className="h-3.5 w-3.5" />
+                <span className="text-xs">GitHub</span>
+              </MetaLink>
+            </div>
+
+            {/* Divider */}
+            <div className="w-full max-w-xs h-px bg-gradient-to-r from-transparent via-border/60 to-transparent" />
+
+            {/* Legal */}
             <div className="flex flex-wrap items-center justify-center gap-2">
               <span className="px-3 py-1.5 rounded-full bg-background/60 border border-border/50 text-xs text-muted-foreground backdrop-blur-sm">
                 仅供个人学习
@@ -62,28 +159,11 @@ export function Footer() {
               </span>
             </div>
 
-            {/* Divider */}
-            <div className="w-full max-w-xs h-px bg-gradient-to-r from-transparent via-border/60 to-transparent" />
-
-            {/* Credits */}
-            <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-5 text-xs text-muted-foreground">
-              <motion.a
-                href="https://github.com/xlongDev"
-                target="_blank"
-                rel="noopener noreferrer"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="flex items-center gap-1.5 hover:text-foreground transition-colors"
-              >
-                <GithubIcon className="h-3.5 w-3.5" />
-                <span>@xlongDev</span>
-              </motion.a>
-              <div className="hidden sm:block h-3.5 w-px bg-border/60" />
-              <div className="flex items-center gap-1.5">
-                <span>Designed with</span>
-                <Heart className="h-3.5 w-3.5 text-pink-500 fill-pink-500" />
-                <span>by xlongDev · 2026</span>
-              </div>
+            {/* Credits — 极小字号，避免抢主信息区视线 */}
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
+              <span>Designed with</span>
+              <Heart className="h-3 w-3 text-pink-500 fill-pink-500" aria-hidden />
+              <span>by xlongDev · 2026</span>
             </div>
           </div>
         </div>
