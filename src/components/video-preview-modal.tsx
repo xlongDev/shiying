@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Download, Loader2, X } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
+import { ModalCloseButton } from "@/components/modal-close-button";
 import { toast } from "sonner";
 import {
   buildProxyUrl,
@@ -65,12 +66,7 @@ export function VideoPreviewModal({ videoUrl, cover, title, onClose }: VideoPrev
       onClick={onClose}
     >
       {/* 关闭按钮 */}
-      <button
-        onClick={onClose}
-        className="fixed top-4 right-4 z-10 h-10 w-10 rounded-full glass-strong flex items-center justify-center"
-      >
-        <X className="h-5 w-5" />
-      </button>
+      <ModalCloseButton onClick={onClose} />
 
       {/* 视频播放器 */}
       <motion.div
