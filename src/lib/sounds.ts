@@ -17,7 +17,9 @@ class SoundEngine {
         this.enabled = localStorage.getItem("sound-enabled") !== "false";
         const v = localStorage.getItem("sound-volume");
         if (v) this.volume = parseFloat(v);
-      } catch {}
+      } catch {
+        /* localStorage 在隐私模式 / 禁用存储时抛错，静默降级 */
+      }
     }
   }
 
@@ -48,7 +50,9 @@ class SoundEngine {
     if (typeof window !== "undefined") {
       try {
         localStorage.setItem("sound-enabled", String(v));
-      } catch {}
+      } catch {
+        /* localStorage 在隐私模式 / 禁用存储时抛错，静默降级 */
+      }
     }
   }
 
@@ -62,7 +66,9 @@ class SoundEngine {
     if (typeof window !== "undefined") {
       try {
         localStorage.setItem("sound-volume", String(this.volume));
-      } catch {}
+      } catch {
+        /* localStorage 在隐私模式 / 禁用存储时抛错，静默降级 */
+      }
     }
   }
 

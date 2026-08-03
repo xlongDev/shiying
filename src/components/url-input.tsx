@@ -26,7 +26,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
   React.useEffect(() => {
     if (externalUrl && externalUrl !== url) {
       // 从文本中提取第一个 https?:// 开头的完整 URL
-      const match = externalUrl.match(/(https?:\/\/[^\s<>"'）\】\},;]+)/);
+      const match = externalUrl.match(/(https?:\/\/[^\s<>"'）】},;]+)/);
       const cleaned = match ? match[1] : externalUrl;
       setUrl(cleaned);
     }
