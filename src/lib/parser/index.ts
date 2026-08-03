@@ -19,6 +19,7 @@ import { parseDouyin } from "./note";
 import { extractUrl } from "./extract";
 import { ParseError } from "./types";
 import type { ParsedVideo } from "./types";
+import { getCachedParse, setCachedParse } from "./cache";
 
 export function detectPlatform(url: string): "douyin" | null {
   const u = url.toLowerCase();
@@ -42,5 +43,13 @@ export async function parseVideo(
     throw new ParseError("暂不支持的链接，请输入抖音分享链接", "UNSUPPORTED_PLATFORM");
   }
 
-  return parseDouyin(rawUrl, options);
+  // 短 TTL 缓存：命中则直接返回深拷贝，避免重复打上游 / 重启 Chrome（高成本）。
+  const cacheKey = `v1:${url}::${options?.skipLivePhoto ? "1" : "0"}`;
+  const cached = getCachedParse(cacheKey);
+  if (cached) return cached;
+
+  const result = await parseDouyin(rawUrl, options);
+  // 存入原始结果（不被调用方修改），返回深拷贝（调用方会就地改 livePhotoPending 等字段）。
+  setCachedParse(cacheKey, result);
+  return structuredClone(result);
 }

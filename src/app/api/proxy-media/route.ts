@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { isAllowedTarget } from "@/lib/ssrf";
 import { buildUpstreamHeaders } from "@/lib/cdn";
 import { logger } from "@/lib/logger";
@@ -22,6 +23,9 @@ const MAX_UPSTREAM_BYTES = 52428800;
 const UPSTREAM_TIMEOUT_MS = 60000;
 
 export async function GET(req: NextRequest) {
+  const blocked = await guardRateLimit(req, "proxy-media", 60, 60_000);
+  if (blocked) return blocked;
+
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get("url");
   const filename = searchParams.get("filename") || "media";

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { logger } from "@/lib/logger";
 import { isAllowedTarget } from "@/lib/ssrf";
 import { extractMusicFromSource } from "@/lib/parser/extract";
@@ -21,6 +22,9 @@ const MOBILE_UA =
  * 校验白名单 + 非内网 IP，与 proxy 系列路由统一收口。
  */
 export async function GET(req: NextRequest) {
+  const blocked = await guardRateLimit(req, "download-music", 30, 60_000);
+  if (blocked) return blocked;
+
   const { searchParams } = new URL(req.url);
   const awemeId = searchParams.get("awemeId");
   const filename = searchParams.get("filename") || "music.m4a";

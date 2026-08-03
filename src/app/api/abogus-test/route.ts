@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { signAwemeDetail } from "@/lib/abogus";
 
 // 纯 Node / 服务端运行时；a_bogus 生成依赖 node:vm（不需要浏览器）。
@@ -75,6 +76,9 @@ async function attempt(awemeId: string, forceSyntheticTtwid: boolean): Promise<A
  * 这是诊断工具，不是生产路径；上线稳定后可删除。
  */
 export async function GET(req: NextRequest) {
+  const blocked = await guardRateLimit(req, "abogus-test", 10, 60_000);
+  if (blocked) return blocked;
+
   const awemeId = (req.nextUrl.searchParams.get("awemeId") ?? "").trim();
   if (!/^\d{5,30}$/.test(awemeId)) {
     return NextResponse.json(

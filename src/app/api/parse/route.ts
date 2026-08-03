@@ -1,32 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseVideo, ParseError } from "@/lib/parser";
 import { detectLivePhotoPresence } from "@/lib/live-photo-resolver";
-import { rateLimit } from "@/lib/rate-limit";
+import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { getParseCapability } from "@/lib/parse-capability";
 import { logger } from "@/lib/logger";
-
-/** 从请求头提取客户端 IP（兼容反向代理 / 直连）。 */
-function getClientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   // 第一道闸：按客户端 IP 限流，防止公开解析 API 被刷量 / 成本失控
-  const rl = await rateLimit(`parse:${getClientIp(req)}`, 20, 60_000);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { ok: false, error: "请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
-      }
-    );
-  }
+  const blocked = await guardRateLimit(req, "parse", 20, 60_000);
+  if (blocked) return blocked;
 
   try {
     const body = await req.json().catch(() => ({}));

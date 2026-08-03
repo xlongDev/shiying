@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { spawn } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -35,6 +36,9 @@ export const maxDuration = 300;
 let cachedFfmpegPath: string | undefined;
 
 export async function GET(req: NextRequest) {
+  const blocked = await guardRateLimit(req, "live-compose", 10, 60_000);
+  if (blocked) return blocked;
+
   const { searchParams } = new URL(req.url);
   const videoUrl = searchParams.get("videoUrl");
   const audioUrl = searchParams.get("audioUrl");
