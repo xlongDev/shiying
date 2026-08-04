@@ -144,12 +144,17 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
   const handleCopyLink = React.useCallback(async () => {
     play("click");
     try {
-      await navigator.clipboard.writeText(video.videoUrl || video.cover);
+      // 图文帖 / 混合图文复制原始抖音链接（还原全部图片），而非首图 CDN 链接
+      const isImageLike = video.contentType === "note" || video.contentType === "slides";
+      const link = isImageLike
+        ? (video.originalUrl ?? video.cover)
+        : video.videoUrlPlay || video.videoUrl || video.originalUrl || video.cover;
+      await navigator.clipboard.writeText(link);
       toast.success("链接已复制");
     } catch {
       toast.error("复制失败");
     }
-  }, [video.videoUrl, video.cover, play]);
+  }, [video.contentType, video.originalUrl, video.videoUrl, video.videoUrlPlay, video.cover, play]);
 
   const toggleImageSelect = (i: number) => {
     play("click");

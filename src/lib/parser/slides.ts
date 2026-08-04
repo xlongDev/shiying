@@ -134,6 +134,8 @@ export async function parseSlides(
     // 单图实况兼容：如果所有图片都是实况（极少见），也标记为 isLivePhoto
     isLivePhoto: livePhotos.length > 0 && livePhotos.length === imageList.length ? true : undefined,
     livePhoto: livePhotos.length === 1 && imageList.length === 1 ? livePhotos[0] : undefined,
+    // 原始链接：混合图文「复制链接」时使用，避免只复制首图
+    originalUrl,
     // 两阶段优化：skipLivePhoto 时标记 pending，前端将异步调用 /api/parse-live-photo 探测实况
     livePhotoPending: options?.skipLivePhoto ? true : undefined,
     raw: { slides: true, originalUrl },

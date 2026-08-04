@@ -247,6 +247,8 @@ export async function parseDouyin(
     contentType: isImagePost ? "note" : "video",
     isLivePhoto: isLivePhoto || undefined,
     livePhoto,
+    // 原始链接：图文帖「复制链接」时使用，避免只复制首图
+    originalUrl: longUrl,
     // 异步实况探测的 pending/background 标记统一由 /api/parse 路由根据内容类型决定
     // （slides 走骨架屏 pending；note 走静默 background），此处仅初始化字段。
     livePhotoPending: undefined,

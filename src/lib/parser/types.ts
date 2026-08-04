@@ -17,6 +17,8 @@ export interface LivePhotoInfo {
 export interface ParsedVideo {
   platform: "douyin";
   awemeId: string;
+  /** 用户输入的原始抖音链接（解析自分享文本），用于「复制链接」还原全部内容 */
+  originalUrl?: string;
   desc: string;
   author: { name: string; avatar: string; uid?: string };
   cover: string;
