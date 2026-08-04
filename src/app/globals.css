@@ -230,6 +230,13 @@
     }
   }
 
+  /* sonner 通知 — 文本在整条 toast 内居中 */
+  /* flex:1 让 [data-content] 占满 toast 剩余宽度，否则 text-align:center 等于自居中（视觉贴左） */
+  [data-sonner-toast] [data-content] {
+    flex: 1;
+    text-align: center;
+  }
+
   /* 极光背景光晕 */
   .aurora {
     position: fixed;

@@ -23,7 +23,8 @@ const MAX_UPSTREAM_BYTES = 52428800;
 const UPSTREAM_TIMEOUT_MS = 60000;
 
 export async function GET(req: NextRequest) {
-  const blocked = await guardRateLimit(req, "proxy-media", 60, 60_000);
+  // 图片代理放宽为 120 次/分钟，避免 100 张图文帖集中预览时误触发服务端限流。
+  const blocked = await guardRateLimit(req, "proxy-media", 120, 60_000);
   if (blocked) return blocked;
 
   const { searchParams } = new URL(req.url);
@@ -81,6 +82,17 @@ export async function GET(req: NextRequest) {
         "proxy-media",
         `upstream failed: ${upstream.status} for ${finalUrl.substring(0, 120)}`
       );
+      // 上游返回 429 时把 Retry-After 透传给浏览器，便于前端自动重试。
+      if (upstream.status === 429) {
+        const retryAfter = upstream.headers.get("retry-after") || "5";
+        return NextResponse.json(
+          { ok: false, error: "上游请求过于频繁，请稍后重试", code: "UPSTREAM_RATE_LIMITED" },
+          {
+            status: 429,
+            headers: { "Retry-After": retryAfter },
+          }
+        );
+      }
       return NextResponse.json(
         { ok: false, error: `上游请求失败：HTTP ${upstream.status}` },
         { status: 502 }

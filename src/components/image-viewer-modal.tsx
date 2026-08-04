@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Download, ChevronLeft, ChevronRight } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
 import { ModalCloseButton } from "@/components/modal-close-button";
+import { LazyImage } from "@/components/lazy-image";
 import { toast } from "sonner";
 import { buildMediaProxyUrl } from "@/lib/media-url";
 
@@ -106,12 +107,15 @@ export function ImageViewerModal({ images, initialIndex, onClose }: ImageViewerM
         className="relative max-w-[85vw] max-h-[80vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <img
-          src={buildMediaProxyUrl(images[index], `preview_${index}.jpg`)}
+        <LazyImage
+          src={images[index]}
+          filename={`preview_${index}.jpg`}
           alt=""
           className="max-w-full max-h-[80vh] object-contain rounded-[2rem]"
-          loading="lazy"
-          decoding="async"
+          placeholderClassName="flex items-center justify-center min-h-[120px] min-w-[120px]"
+          eager
+          maxRetries={3}
+          retryBaseDelay={600}
         />
       </motion.div>
 

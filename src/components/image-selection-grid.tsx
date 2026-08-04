@@ -4,7 +4,7 @@ import * as React from "react";
 import { motion } from "framer-motion";
 import { Loader2, Check } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
-import { buildMediaProxyUrl } from "@/lib/media-url";
+import { LazyImage } from "@/components/lazy-image";
 import type { LivePhotoInfo } from "@/lib/parser";
 
 interface ImageSelectionGridProps {
@@ -58,12 +58,14 @@ export function ImageSelectionGrid({
             onDoubleClick={() => onOpenViewer(i)}
             className="relative aspect-square rounded-xl overflow-hidden cursor-pointer glass flex-shrink-0"
           >
-            <img
-              src={buildMediaProxyUrl(img, `thumb_${i}.jpg`)}
+            <LazyImage
+              src={img}
+              filename={`thumb_${i}.jpg`}
               alt=""
               className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
+              placeholderClassName="absolute inset-0"
+              maxRetries={3}
+              retryBaseDelay={600}
             />
             <div
               className={`absolute inset-0 transition-all ${isSelected(i) ? "bg-primary/30" : "bg-black/0 hover:bg-black/20"}`}
