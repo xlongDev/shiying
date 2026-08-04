@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get("url");
   const filename = searchParams.get("filename") || "audio.mp3";
+  const preview = searchParams.get("preview") === "1";
   let videoTempPath = "";
   let audioTempPath = "";
 
@@ -199,7 +200,9 @@ export async function GET(req: NextRequest) {
 
     const responseHeaders = new Headers({
       "Content-Type": "audio/mpeg",
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Content-Disposition": preview
+        ? "inline"
+        : `attachment; filename="${encodeURIComponent(filename)}"`,
       "Content-Length": String(audioStats.size),
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",

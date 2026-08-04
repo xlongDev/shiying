@@ -72,10 +72,18 @@ export function useDownloadAction(): DownloadActionResult {
           throw new Error("下载产物为空");
         }
 
-        triggerBlobDownload(blob, opts.filename);
-        setState("done");
-        play("complete");
-        toast.success(opts.successMessage);
+        // fetchBlob 内部已自行触发多个下载时（如批量下载），可能返回空 Blob。
+        // 此时只需更新成功状态，避免再触发一次 0B 文件下载。
+        if (blob.size === 0) {
+          setState("done");
+          play("complete");
+          toast.success(opts.successMessage);
+        } else {
+          triggerBlobDownload(blob, opts.filename);
+          setState("done");
+          play("complete");
+          toast.success(opts.successMessage);
+        }
 
         setTimeout(() => setState("idle"), 2000);
       } catch (err) {

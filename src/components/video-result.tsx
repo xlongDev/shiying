@@ -23,6 +23,9 @@ import {
   buildMediaProxyUrl,
   buildProxyUrl,
   buildExtractAudioUrl,
+  buildStreamUrl,
+  buildMusicPreviewUrl,
+  buildExtractAudioPreviewUrl,
   sanitizeFilename,
   formatCount,
   formatDuration,
@@ -86,6 +89,26 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
     }
     return downloadUrl || null;
   }, [video, isImagePost]);
+
+  /** 计算音乐在线预览 URL（优先用流代理，无 musicUrl 时按图文/视频分支降级） */
+  const musicPreviewSrc = React.useMemo((): string | null => {
+    if (!hasMusic) return null;
+    if (video.musicUrl) {
+      return buildStreamUrl(video.musicUrl);
+    }
+    if (isImagePost) {
+      return buildMusicPreviewUrl(video.awemeId, `${sanitizeFilename(video.desc)}_原声.m4a`);
+    }
+    const videoSrc = video.videoUrlPlay || video.videoUrl;
+    if (videoSrc) {
+      return buildExtractAudioPreviewUrl(
+        videoSrc,
+        `${sanitizeFilename(video.desc)}_原声.mp3`,
+        video.awemeId
+      );
+    }
+    return null;
+  }, [hasMusic, video, isImagePost]);
 
   const handleDownloadVideo = React.useCallback(async () => {
     if (!video.videoUrl) return;
@@ -280,6 +303,7 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
               isLivePhotoPending={isLivePhotoPending}
               selectedCount={selectedCount}
               totalImages={totalImages}
+              musicPreviewSrc={musicPreviewSrc}
               video={downloader.video}
               music={downloader.music}
               images={downloader.images}

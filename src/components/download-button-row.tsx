@@ -15,6 +15,7 @@ import {
   Copy,
 } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
+import { GlassAudioControls } from "@/components/glass-audio-controls";
 import type { DownloadStatus } from "@/hooks/use-media-downloader";
 
 interface DownloadButtonRowProps {
@@ -27,6 +28,7 @@ interface DownloadButtonRowProps {
   isLivePhotoPending: boolean;
   selectedCount: number;
   totalImages: number;
+  musicPreviewSrc?: string | null;
   video: DownloadStatus;
   music: DownloadStatus;
   images: DownloadStatus;
@@ -56,6 +58,7 @@ export function DownloadButtonRow({
   isLivePhotoPending,
   selectedCount,
   totalImages,
+  musicPreviewSrc,
   video,
   music,
   images,
@@ -101,38 +104,43 @@ export function DownloadButtonRow({
         </motion.button>
       )}
 
-      {/* 音乐下载 — 非实况帖/非混合实况帖时显示 */}
+      {/* 音乐预览 + 下载 — 非实况帖/非混合实况帖时显示 */}
       {hasMusic && !isLivePhoto && !isMixedLivePhoto && !isLivePhotoPending && (
-        <motion.button
-          onClick={onDownloadMusic}
-          disabled={music.state === "downloading"}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="relative w-full glass rounded-2xl py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:bg-primary/10 transition-colors disabled:opacity-60 overflow-hidden"
-        >
-          {music.state === "downloading" ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{music.progress > 0 ? `下载中 ${music.progress}%` : "下载中..."}</span>
-              {music.progress > 0 && (
-                <div
-                  className="absolute bottom-0 left-0 h-0.5 bg-primary transition-all duration-200"
-                  style={{ width: `${music.progress}%` }}
-                />
-              )}
-            </>
-          ) : music.state === "done" ? (
-            <>
-              <Check className="h-4 w-4" />
-              <span>音乐已下载</span>
-            </>
-          ) : (
-            <>
-              <Music className="h-4 w-4" />
-              <span>下载原声音乐</span>
-            </>
+        <div className="space-y-2">
+          {musicPreviewSrc && (
+            <GlassAudioControls src={musicPreviewSrc} showLabel={false} className="w-full" />
           )}
-        </motion.button>
+          <motion.button
+            onClick={onDownloadMusic}
+            disabled={music.state === "downloading"}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="relative w-full glass rounded-2xl py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:bg-primary/10 transition-colors disabled:opacity-60 overflow-hidden"
+          >
+            {music.state === "downloading" ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>{music.progress > 0 ? `下载中 ${music.progress}%` : "下载中..."}</span>
+                {music.progress > 0 && (
+                  <div
+                    className="absolute bottom-0 left-0 h-0.5 bg-primary transition-all duration-200"
+                    style={{ width: `${music.progress}%` }}
+                  />
+                )}
+              </>
+            ) : music.state === "done" ? (
+              <>
+                <Check className="h-4 w-4" />
+                <span>音乐已下载</span>
+              </>
+            ) : (
+              <>
+                <Music className="h-4 w-4" />
+                <span>下载原声音乐</span>
+              </>
+            )}
+          </motion.button>
+        </div>
       )}
 
       {/* 图片下载 — 普通图文帖和混合实况帖显示，单图实况隐藏 */}

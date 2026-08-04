@@ -14,6 +14,7 @@ import { LivePhotoDetecting } from "@/components/live-photo-detecting";
 import { LivePhotoFailed } from "@/components/live-photo-failed";
 import { SingleLivePhotoCard } from "@/components/single-live-photo-card";
 import { MixedLivePhotoCard } from "@/components/mixed-live-photo-card";
+import { LiveComposePreviewModal } from "@/components/live-compose-preview-modal";
 import { useLivePhotoViewState } from "@/hooks/use-live-photo-view-state";
 import { useDownloadAction } from "@/hooks/use-download-action";
 
@@ -36,6 +37,7 @@ export function LivePhotoPanel({
   onRetryLivePhoto,
 }: LivePhotoPanelProps) {
   const view = useLivePhotoViewState();
+  const [composePreviewOpen, setComposePreviewOpen] = React.useState(false);
 
   /* ---- 下载动作（每个独立状态机） ---- */
   const imageDownload = useDownloadAction();
@@ -90,6 +92,11 @@ export function LivePhotoPanel({
       errorMessage: "合成失败",
       minBlobSize: 1000,
     });
+  };
+
+  const handlePreviewCompose = () => {
+    if (!lp?.videoUrl) return;
+    setComposePreviewOpen(true);
   };
 
   /* ----------------------------- 混合实况下载 ----------------------------- */
@@ -283,6 +290,7 @@ export function LivePhotoPanel({
             onDownloadImage={handleDownloadLiveImage}
             onDownloadVideo={handleDownloadLiveVideo}
             onDownloadMusic={handleDownloadLiveMusic}
+            onPreviewCompose={handlePreviewCompose}
             onComposeLive={handleComposeLiveVideo}
           />
         )}
@@ -314,6 +322,16 @@ export function LivePhotoPanel({
           />
         )}
       </AnimatePresence>
+
+      {/* 单图实况合成预览弹窗 */}
+      {composePreviewOpen && lp?.videoUrl && (
+        <LiveComposePreviewModal
+          videoUrl={lp.videoUrl}
+          audioUrl={lp.musicUrl || ""}
+          title={video.desc}
+          onClose={() => setComposePreviewOpen(false)}
+        />
+      )}
     </motion.div>
   );
 }

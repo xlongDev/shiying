@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Check, Music, Film, Video, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Check, Music, Video, Image as ImageIcon, Loader2, Eye, Download } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { GlassVideoControls } from "@/components/glass-video-controls";
 import { GlassAudioControls } from "@/components/glass-audio-controls";
@@ -19,6 +19,7 @@ interface SingleLivePhotoCardProps {
   onDownloadImage: () => void;
   onDownloadVideo: () => void;
   onDownloadMusic: () => void;
+  onPreviewCompose: () => void;
   onComposeLive: () => void;
 }
 
@@ -34,6 +35,7 @@ export function SingleLivePhotoCard({
   onDownloadImage,
   onDownloadVideo,
   onDownloadMusic,
+  onPreviewCompose,
   onComposeLive,
 }: SingleLivePhotoCardProps) {
   const reduce = useReducedMotion();
@@ -200,11 +202,23 @@ export function SingleLivePhotoCard({
         </motion.div>
 
         {lp.musicUrl && (
-          <motion.div variants={itemVariants}>
-            <button
+          <motion.div variants={itemVariants} className="grid grid-cols-2 gap-2">
+            <motion.button
+              onClick={onPreviewCompose}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="glass rounded-xl py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-primary/10 transition-colors"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              预览合成效果
+            </motion.button>
+
+            <motion.button
               onClick={onComposeLive}
               disabled={composeState === "downloading"}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl py-2.5 text-xs font-semibold text-white flex items-center justify-center gap-2 disabled:opacity-60 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl py-2.5 text-xs font-semibold text-white flex items-center justify-center gap-1.5 disabled:opacity-60 transition-transform"
             >
               {composeState === "downloading" ? (
                 <>
@@ -214,15 +228,15 @@ export function SingleLivePhotoCard({
               ) : composeState === "done" ? (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  合成完成
+                  已下载
                 </>
               ) : (
                 <>
-                  <Film className="h-3.5 w-3.5" />
-                  合并短片 + 背景音乐
+                  <Download className="h-3.5 w-3.5" />
+                  下载合成视频
                 </>
               )}
-            </button>
+            </motion.button>
           </motion.div>
         )}
       </motion.div>

@@ -41,6 +41,25 @@ export function buildExtractAudioUrl(url: string, filename: string, awemeId?: st
   return apiUrl;
 }
 
+/** 在线预览背景音乐（不触发下载）。 */
+export function buildMusicPreviewUrl(awemeId: string, filename?: string): string {
+  let apiUrl = `/api/download-music?awemeId=${encodeURIComponent(awemeId)}&preview=1`;
+  if (filename) apiUrl += `&filename=${encodeURIComponent(filename)}`;
+  return apiUrl;
+}
+
+/** 从视频中提取音频用于在线预览（不触发下载）。 */
+export function buildExtractAudioPreviewUrl(
+  url: string,
+  filename?: string,
+  awemeId?: string
+): string {
+  let apiUrl = `/api/extract-audio?url=${encodeURIComponent(url)}&preview=1`;
+  if (filename) apiUrl += `&filename=${encodeURIComponent(filename)}`;
+  if (awemeId) apiUrl += `&awemeId=${encodeURIComponent(awemeId)}`;
+  return apiUrl;
+}
+
 /** 触发浏览器下载一个 Blob（图片 / 视频 / 音频 / ZIP） */
 export function triggerBlobDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);

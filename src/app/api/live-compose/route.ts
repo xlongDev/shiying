@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
   const videoUrl = searchParams.get("videoUrl");
   const audioUrl = searchParams.get("audioUrl");
   const filename = searchParams.get("filename") || "live_compose.mp4";
+  const preview = searchParams.get("preview") === "1";
 
   let videoTempPath = "";
   let audioTempPath = "";
@@ -110,7 +111,9 @@ export async function GET(req: NextRequest) {
       const videoBuffer = fs.readFileSync(videoTempPath);
       const respHeaders = new Headers({
         "Content-Type": "video/mp4",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+        "Content-Disposition": preview
+          ? "inline"
+          : `attachment; filename="${encodeURIComponent(filename)}"`,
         "Content-Length": String(videoSize),
         "Cache-Control": "no-store",
         "Access-Control-Allow-Origin": "*",
@@ -125,7 +128,9 @@ export async function GET(req: NextRequest) {
       const videoBuffer = fs.readFileSync(videoTempPath);
       const respHeaders = new Headers({
         "Content-Type": "video/mp4",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+        "Content-Disposition": preview
+          ? "inline"
+          : `attachment; filename="${encodeURIComponent(filename)}"`,
         "Content-Length": String(videoSize),
         "Cache-Control": "no-store",
         "Access-Control-Allow-Origin": "*",
@@ -157,7 +162,9 @@ export async function GET(req: NextRequest) {
 
     const respHeaders = new Headers({
       "Content-Type": "video/mp4",
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Content-Disposition": preview
+        ? "inline"
+        : `attachment; filename="${encodeURIComponent(filename)}"`,
       "Content-Length": String(outputSize),
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",

@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const awemeId = searchParams.get("awemeId");
   const filename = searchParams.get("filename") || "music.m4a";
+  const preview = searchParams.get("preview") === "1";
 
   if (!awemeId) {
     return NextResponse.json({ ok: false, error: "缺少 awemeId 参数" }, { status: 400 });
@@ -81,7 +82,9 @@ export async function GET(req: NextRequest) {
 
     const headers = new Headers({
       "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Content-Disposition": preview
+        ? "inline"
+        : `attachment; filename="${encodeURIComponent(filename)}"`,
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
     });
