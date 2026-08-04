@@ -3,6 +3,7 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import { Clipboard, Scissors, Download } from "lucide-react";
+import { revealContainer, revealItem } from "@/lib/motion";
 
 const STEPS = [
   {
@@ -29,46 +30,50 @@ export function StepsSection() {
   return (
     <section className="w-full py-16 sm:py-20 px-5 sm:px-8">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: "-100px" }}
-        transition={{ duration: 0.6 }}
+        variants={revealContainer}
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: "-80px" }}
         className="text-center mb-12"
       >
-        <h2 className="text-3xl sm:text-4xl font-bold mb-3">三步即可完成</h2>
-        <p className="text-muted-foreground">简单到不需要教程</p>
-      </motion.div>
+        <motion.div variants={revealItem}>
+          <h2 className="text-3xl sm:text-4xl font-bold mb-3">三步即可完成</h2>
+          <p className="text-muted-foreground">简单到不需要教程</p>
+        </motion.div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-        {STEPS.map((s, i) => (
-          <motion.div
-            key={s.step}
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{
-              duration: 0.5,
-              delay: i * 0.15,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-            className="relative flex flex-col items-center text-center"
-          >
-            <div className="relative mb-5">
-              <motion.div
-                whileHover={{ scale: 1.08, rotate: 5 }}
-                className="h-24 w-24 rounded-3xl glass flex items-center justify-center relative z-10 border border-white/15"
-              >
-                <s.icon className="h-10 w-10 text-primary" strokeWidth={1.8} />
-              </motion.div>
-              <span className="absolute -top-2 -right-2 h-8 w-8 rounded-full bg-gradient-to-br from-primary to-pink-500 text-white text-xs font-bold flex items-center justify-center z-20 shadow-lg">
-                {s.step}
-              </span>
-            </div>
-            <h3 className="text-lg font-semibold mb-2">{s.title}</h3>
-            <p className="text-sm text-muted-foreground max-w-[240px] leading-relaxed">{s.desc}</p>
-          </motion.div>
-        ))}
-      </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-4">
+          {STEPS.map((s) => (
+            <motion.div
+              key={s.step}
+              variants={revealItem}
+              whileHover={{ y: -6 }}
+              className="relative flex flex-col items-center text-center"
+            >
+              <div className="relative mb-5">
+                <motion.div
+                  whileHover={{ scale: 1.08, rotate: 5 }}
+                  className="h-24 w-24 rounded-3xl glass flex items-center justify-center relative z-10 border border-white/15"
+                >
+                  <s.icon className="h-10 w-10 text-primary" strokeWidth={1.8} />
+                </motion.div>
+                <motion.span
+                  initial={{ scale: 0 }}
+                  whileInView={{ scale: 1 }}
+                  viewport={{ once: true }}
+                  transition={{ type: "spring", stiffness: 320, damping: 18, delay: 0.35 }}
+                  className="absolute -top-2 -right-2 h-8 w-8 rounded-full bg-gradient-to-br from-primary to-pink-500 text-white text-xs font-bold flex items-center justify-center z-20 shadow-lg"
+                >
+                  {s.step}
+                </motion.span>
+              </div>
+              <h3 className="text-lg font-semibold mb-2">{s.title}</h3>
+              <p className="text-sm text-muted-foreground max-w-[240px] leading-relaxed">
+                {s.desc}
+              </p>
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
     </section>
   );
 }

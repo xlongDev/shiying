@@ -4,6 +4,7 @@ import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
+import { revealContainer, revealItem } from "@/lib/motion";
 
 const FAQ_ITEMS = [
   {
@@ -76,28 +77,23 @@ export function FaqSection() {
   return (
     <section className="mx-auto max-w-3xl px-5 sm:px-8 py-12">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.6 }}
-        className="text-center mb-8"
+        variants={revealContainer}
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: "-80px" }}
       >
-        <h2 className="text-2xl sm:text-3xl font-bold mb-2">常见问题</h2>
-      </motion.div>
+        <motion.div variants={revealItem} className="text-center mb-8">
+          <h2 className="text-2xl sm:text-3xl font-bold mb-2">常见问题</h2>
+        </motion.div>
 
-      <div className="space-y-3">
-        {FAQ_ITEMS.map((item, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ delay: i * 0.05, duration: 0.4 }}
-          >
-            <FaqItem item={item} />
-          </motion.div>
-        ))}
-      </div>
+        <div className="space-y-3">
+          {FAQ_ITEMS.map((item) => (
+            <motion.div key={item.q} variants={revealItem}>
+              <FaqItem item={item} />
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
     </section>
   );
 }

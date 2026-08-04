@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { MotionConfig } from "framer-motion";
 import "./globals.css";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -64,8 +65,10 @@ export default function RootLayout({
           disableTransitionOnChange={false}
         >
           <SoundManager>
-            {children}
-            <SonnerToaster position="top-center" theme="system" richColors closeButton />
+            <MotionConfig reducedMotion="user">
+              {children}
+              <SonnerToaster position="top-center" theme="system" richColors closeButton />
+            </MotionConfig>
           </SoundManager>
         </ThemeProvider>
       </body>

@@ -2,13 +2,15 @@
 
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
+import { EASE_EXPO } from "@/lib/motion";
 
 export function ParseSkeleton() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
+      initial={{ opacity: 0, y: 16, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -16 }}
+      transition={{ duration: 0.4, ease: EASE_EXPO }}
       className="w-full"
     >
       <div className="glass-strong rounded-[2rem] p-4 sm:p-6 overflow-hidden">

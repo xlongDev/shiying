@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { Zap, ShieldCheck, Gem, Music4, Package } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { useSound } from "@/components/sound-manager";
+import { revealContainer, revealItem } from "@/lib/motion";
 
 type IconRenderer = React.FC<{ className?: string }>;
 
@@ -69,61 +70,55 @@ export function FeaturesSection() {
 
       <div className="relative max-w-5xl mx-auto">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-14"
+          variants={revealContainer}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
         >
-          {/*  eyebrow */}
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass glass-shine text-xs font-medium text-muted-foreground mb-5">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
-            </span>
-            核心能力
-          </div>
+          <motion.div variants={revealItem} className="text-center mb-14">
+            {/*  eyebrow */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass glass-shine text-xs font-medium text-muted-foreground mb-5">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
+              </span>
+              核心能力
+            </div>
 
-          <h2 className="text-3xl sm:text-4xl font-bold mb-4 tracking-tight">
-            为什么选择 <span className="text-gradient">拾影</span>
-          </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
-            从一条链接到高清素材，只需几秒。视频、图文、实况照片、BGM，全部无水印下载。
-          </p>
-        </motion.div>
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4 tracking-tight">
+              为什么选择 <span className="text-gradient">拾影</span>
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
+              从一条链接到高清素材，只需几秒。视频、图文、实况照片、BGM，全部无水印下载。
+            </p>
+          </motion.div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {FEATURES.map((f, i) => (
-            <motion.div
-              key={f.title}
-              initial={{ opacity: 0, y: 30 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-50px" }}
-              transition={{
-                duration: 0.5,
-                delay: i * 0.08,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-              whileHover={{ y: -6 }}
-              onHoverStart={() => play("hover")}
-              className="glass glass-shine rounded-3xl p-6 group cursor-default relative overflow-hidden"
-            >
-              {/* 悬停时微弱的同色系背景晕染 */}
-              <div
-                className={`absolute inset-0 bg-gradient-to-br ${f.gradient} opacity-0 group-hover:opacity-[0.04] transition-opacity duration-500 pointer-events-none`}
-              />
-
-              <div
-                className={`relative h-12 w-12 rounded-2xl bg-gradient-to-br ${f.gradient} flex items-center justify-center mb-4 shadow-lg ring-1 ring-white/15 group-hover:scale-110 group-hover:shadow-xl group-hover:ring-white/25 transition-all duration-300`}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {FEATURES.map((f) => (
+              <motion.div
+                key={f.title}
+                variants={revealItem}
+                whileHover={{ y: -6 }}
+                onHoverStart={() => play("hover")}
+                className="glass glass-shine rounded-3xl p-6 group cursor-default relative overflow-hidden"
               >
-                <f.Icon className="h-6 w-6 text-white" />
-              </div>
+                {/* 悬停时微弱的同色系背景晕染 */}
+                <div
+                  className={`absolute inset-0 bg-gradient-to-br ${f.gradient} opacity-0 group-hover:opacity-[0.04] transition-opacity duration-500 pointer-events-none`}
+                />
 
-              <h3 className="relative text-lg font-semibold mb-2">{f.title}</h3>
-              <p className="relative text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
-            </motion.div>
-          ))}
-        </div>
+                <div
+                  className={`relative h-12 w-12 rounded-2xl bg-gradient-to-br ${f.gradient} flex items-center justify-center mb-4 shadow-lg ring-1 ring-white/15 group-hover:scale-110 group-hover:shadow-xl group-hover:ring-white/25 transition-all duration-300`}
+                >
+                  <f.Icon className="h-6 w-6 text-white" />
+                </div>
+
+                <h3 className="relative text-lg font-semibold mb-2">{f.title}</h3>
+                <p className="relative text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
       </div>
     </section>
   );

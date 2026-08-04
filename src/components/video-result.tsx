@@ -3,6 +3,7 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
+import { EASE_EXPO } from "@/lib/motion";
 import { Heart, MessageCircle, Share2, Image as ImageIcon, Clock } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
 import { toast } from "sonner";
@@ -141,10 +142,10 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -30 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, y: 24, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -12 }}
+      transition={{ duration: 0.5, ease: EASE_EXPO }}
       className="w-full"
     >
       <div className="glass-strong rounded-[2rem] p-4 sm:p-6 overflow-hidden">

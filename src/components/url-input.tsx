@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimationControls } from "framer-motion";
 import { ClipboardPaste, X, Sparkles, Loader2 } from "lucide-react";
 import { useSound } from "@/components/sound-manager";
 import { toast } from "sonner";
@@ -20,6 +20,15 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
   const { play } = useSound();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const autoReadRef = React.useRef(false);
+  const pasteControls = useAnimationControls();
+
+  const pulsePaste = () => {
+    pasteControls.start({
+      opacity: [0, 0.9, 0],
+      scale: [1, 1.02, 1],
+      transition: { duration: 0.6, ease: "easeOut" },
+    });
+  };
 
   // 当外部 URL 变化时（如点击历史记录），同步到输入框
   // 用正则提取纯 URL，去除分享文本等无关字符
@@ -71,6 +80,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
           }
           setUrl(text.trim());
           play("paste");
+          pulsePaste();
           toast.success("检测到剪贴板链接，自动解析中...");
           setTimeout(() => onParse(text.trim()), 500);
         }
@@ -80,7 +90,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
     };
 
     setTimeout(tryAutoRead, 800);
-  }, [onParse, play]);
+  }, [onParse, play]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePaste = async () => {
     try {
@@ -89,6 +99,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
         const trimmed = text.trim();
         setUrl(trimmed);
         play("paste");
+        pulsePaste();
         if (containsVideoLink(trimmed)) {
           toast.success("已粘贴，自动解析中...");
           setTimeout(() => onParse(trimmed), 300);
@@ -126,18 +137,20 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
   };
 
   return (
-    <motion.form
-      onSubmit={handleSubmit}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.4, duration: 0.5 }}
-      className="w-full"
-    >
-      <div
-        className={`relative flex items-center gap-2 glass-strong rounded-[2rem] p-2 transition-all duration-300 ${
+    <form onSubmit={handleSubmit} className="w-full">
+      <motion.div
+        animate={{ scale: isFocused ? 1.012 : 1 }}
+        transition={{ type: "spring", stiffness: 300, damping: 22 }}
+        className={`relative flex items-center gap-2 glass-strong rounded-[2rem] p-2 transition-shadow duration-300 ${
           isFocused ? "ring-2 ring-primary/50 shadow-lg shadow-primary/20" : ""
         }`}
       >
+        <motion.div
+          aria-hidden
+          initial={{ opacity: 0 }}
+          animate={pasteControls}
+          className="pointer-events-none absolute inset-0 rounded-[2rem] ring-2 ring-primary/60"
+        />
         {/* 粘贴按钮 — 左侧圆形图标 */}
         <motion.button
           type="button"
@@ -212,13 +225,12 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
             )}
           </AnimatePresence>
         </motion.button>
-      </div>
+      </motion.div>
 
       {/* 提示信息 */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.6 }}
         className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground"
       >
         <span className="flex items-center gap-1">
@@ -234,6 +246,6 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
           无水印 · 高清 · 免费
         </span>
       </motion.div>
-    </motion.form>
+    </form>
   );
 }
