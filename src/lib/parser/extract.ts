@@ -168,6 +168,64 @@ export function extractMusicFromSource(src: unknown): string {
 }
 
 /**
+ * 抖音音乐元信息（歌名 + 作者 + 封面）。
+ *
+ * 抖音对汽水音乐（版权音乐）/ 原声，会把真实歌名与作者嵌进 `music.title` 的括号里，例如：
+ *   `@上传者创作的原声一上传者（原声中的歌曲：真实歌名-真实作者）`
+ * 命中该模式时提取出真实歌名/作者；未命中（普通用户原声）则回退为 music.title / music.author 原样展示。
+ */
+export interface MusicMeta {
+  /** 展示用歌曲名（汽水音乐提取真实歌名，否则 music.title） */
+  title: string;
+  /** 作者/演唱者（汽水音乐提取真实作者，否则 music.author） */
+  author: string;
+  /** 音乐封面图 URL（如有） */
+  cover?: string;
+  /** 是否为用户原声（未提取到真实歌曲名） */
+  isOriginalSound?: boolean;
+}
+
+export function extractMusicMetaFromSource(src: unknown): MusicMeta | null {
+  if (!src || typeof src !== "object") return null;
+  const m = src as Record<string, unknown>;
+  const rawTitle = typeof m.title === "string" ? m.title : "";
+  const rawAuthor = typeof m.author === "string" ? m.author : "";
+  if (!rawTitle && !rawAuthor) return null;
+
+  let title = rawTitle;
+  let author = rawAuthor;
+
+  // 汽水音乐 / 原声：title 形如
+  //   @上传者创作的原声一上传者（原声中的歌曲：真实歌名-真实作者）
+  // 提取括号中的真实歌名（group1）与作者（group2）
+  const qishui = rawTitle.match(/原声中的歌曲[：:]\s*(.+?)\s*[-—]\s*(.+?)\s*[）)]/);
+  const isOriginalSound = !qishui;
+  if (qishui) {
+    title = qishui[1].trim();
+    author = qishui[2].trim();
+  }
+
+  const meta: MusicMeta = {
+    title: title || rawAuthor || "未知音乐",
+    author,
+    isOriginalSound,
+  };
+
+  // 封面：cover_large / cover_hd / cover_medium / cover_thumb 为对象 { url_list: [...] }
+  const coverRaw = m.cover_large ?? m.cover_hd ?? m.cover_medium ?? m.cover_thumb ?? null;
+  if (coverRaw && typeof coverRaw === "object") {
+    const c = coverRaw as Record<string, unknown>;
+    const url = pickFirstUrl(c.url_list) || normalizeUrl(typeof c.url === "string" ? c.url : "");
+    if (url) meta.cover = url;
+  } else if (typeof coverRaw === "string") {
+    const url = normalizeUrl(coverRaw);
+    if (url) meta.cover = url;
+  }
+
+  return meta;
+}
+
+/**
  * 从 HTML 中提取 _ROUTER_DATA / window._ROUTER_DATA 的 JSON 字符串。
  * 使用大括号深度匹配，比惰性正则更稳健，可处理超大嵌套 JSON。
  */

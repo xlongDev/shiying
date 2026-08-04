@@ -2,16 +2,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { MixedLivePhotoCard } from "@/components/mixed-live-photo-card";
-import type { ParsedVideo, LivePhotoInfo } from "@/lib/parser";
-
-const base: ParsedVideo = {
-  platform: "douyin",
-  awemeId: "1",
-  desc: "测试标题",
-  author: { name: "author", avatar: "https://x/y.jpg" },
-  cover: "https://x/c.jpg",
-  videoUrl: "https://x/v.mp4",
-};
+import type { LivePhotoInfo } from "@/lib/parser";
 
 const livePhotos: LivePhotoInfo[] = [
   { imageUrl: "https://x/1.jpg", videoUrl: "https://x/1.mp4", musicUrl: "" },
@@ -23,7 +14,6 @@ type Props = Parameters<typeof MixedLivePhotoCard>[0];
 
 function makeProps(overrides: Partial<Props> = {}): Props {
   return {
-    video: base,
     livePhotos,
     selectedLiveIndex: 0,
     onPrev: vi.fn(),
@@ -33,11 +23,9 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     onToggleBatch: vi.fn(),
     imageState: "idle",
     videoState: "idle",
-    musicState: "idle",
     composeState: "idle",
     onDownloadSelectedImage: vi.fn(),
     onDownloadSelectedVideo: vi.fn(),
-    onDownloadMixedMusic: vi.fn(),
     onOpenComposeModal: vi.fn(),
     onDownloadLiveImages: vi.fn(),
     onDownloadLiveVideos: vi.fn(),
@@ -91,7 +79,7 @@ describe("MixedLivePhotoCard", () => {
   it("合成按钮触发 onOpenComposeModal", () => {
     const onOpenComposeModal = vi.fn();
     render(<MixedLivePhotoCard {...makeProps({ onOpenComposeModal })} />);
-    fireEvent.click(screen.getByText(/合成完整视频/));
+    fireEvent.click(screen.getByText(/合成实况视频/));
     expect(onOpenComposeModal).toHaveBeenCalledTimes(1);
   });
 });

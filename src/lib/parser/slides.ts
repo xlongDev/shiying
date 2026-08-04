@@ -5,7 +5,13 @@
 
 import { ParseError } from "./types";
 import type { LivePhotoInfo, ParsedVideo } from "./types";
-import { pickFirstUrl, normalizeUrl, formatNumber, pickBestImageUrl } from "./extract";
+import {
+  pickFirstUrl,
+  normalizeUrl,
+  formatNumber,
+  pickBestImageUrl,
+  extractMusicMetaFromSource,
+} from "./extract";
 import { resolveLivePhotosForSlides } from "../live-photo-resolver";
 import { logger } from "../logger";
 import { fetchAwemeItem } from "./aweme-detail";
@@ -33,6 +39,9 @@ export async function parseSlides(
   const itemStats = (item.statistics ?? {}) as Record<string, unknown>;
   const music = (item.music ?? {}) as Record<string, unknown>;
   const images = item.images as unknown[] | null;
+
+  // 音乐元信息（歌名 / 作者 / 封面），汽水音乐可解析出真实歌名-作者
+  const musicMeta = extractMusicMetaFromSource(music);
 
   desc = (item.desc as string) ?? "";
   authorName = (author.nickname as string) ?? "Unknown";
@@ -123,6 +132,7 @@ export async function parseSlides(
     videoUrl: "", // slides 类型没有独立视频
     musicUrl: musicUrl || undefined,
     hasMusic,
+    musicMeta: musicMeta || undefined,
     duration,
     stats,
     images: imageList.length > 0 ? imageList : undefined,

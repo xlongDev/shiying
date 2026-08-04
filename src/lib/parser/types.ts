@@ -27,6 +27,17 @@ export interface ParsedVideo {
   videoUrlPlay?: string;
   musicUrl?: string;
   hasMusic?: boolean;
+  /** 音乐元信息：汽水音乐（版权音乐）可解析出真实歌名/作者，否则回退为 music.title/author */
+  musicMeta?: {
+    /** 展示用歌曲名（汽水音乐提取真实歌名，否则 music.title） */
+    title: string;
+    /** 作者/演唱者（汽水音乐提取真实作者，否则 music.author） */
+    author: string;
+    /** 音乐封面图 URL（如有） */
+    cover?: string;
+    /** 是否为用户原声（未提取到真实歌曲名）。原声下 title 为「@用户创作的原声」式文本 */
+    isOriginalSound?: boolean;
+  };
   duration?: number;
   stats?: { likeCount?: number; commentCount?: number; shareCount?: number };
   images?: string[];

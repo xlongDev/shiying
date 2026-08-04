@@ -14,6 +14,7 @@ import {
   extractDouyinId,
   resolveShortLink,
   extractMusicFromSource,
+  extractMusicMetaFromSource,
 } from "./extract";
 import { resolveLivePhotoVideoUrl } from "../live-photo-resolver";
 import { parseSlides } from "./slides";
@@ -115,6 +116,9 @@ export async function parseDouyin(
 
   // 音乐对象（提前声明，供时长计算和音频提取使用）
   const music = (item.music ?? {}) as Record<string, unknown>;
+
+  // 音乐元信息（歌名 / 作者 / 封面），汽水音乐可解析出真实歌名-作者
+  const musicMeta = extractMusicMetaFromSource(music);
 
   // 时长：iesdouyin 返回 video.duration 为毫秒，需转换为秒；
   // 图文帖常无 video 时长，但 music.duration 为秒，可作为兜底
@@ -236,6 +240,7 @@ export async function parseDouyin(
     videoUrlPlay: videoUrlPlay || undefined,
     musicUrl: musicUrl || undefined,
     hasMusic,
+    musicMeta: musicMeta || undefined,
     duration,
     stats: {
       likeCount: formatNumber(stats.digg_count ?? stats.diggCount),

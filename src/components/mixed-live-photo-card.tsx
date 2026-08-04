@@ -2,18 +2,16 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Music, Film, Video, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Film, Video, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { DownloadButton } from "@/components/download-button";
 import { GlassVideoControls } from "@/components/glass-video-controls";
-import { GlassAudioControls } from "@/components/glass-audio-controls";
 import { cn } from "@/lib/utils";
 import { buildMediaProxyUrl, buildStreamUrl } from "@/lib/media-url";
-import type { LivePhotoInfo, ParsedVideo } from "@/lib/parser";
+import type { LivePhotoInfo } from "@/lib/parser";
 import type { DownloadState } from "@/hooks/use-media-downloader";
 
 interface MixedLivePhotoCardProps {
-  video: ParsedVideo;
   livePhotos: LivePhotoInfo[];
   selectedLiveIndex: number;
   onPrev: () => void;
@@ -23,11 +21,9 @@ interface MixedLivePhotoCardProps {
   onToggleBatch: () => void;
   imageState: DownloadState;
   videoState: DownloadState;
-  musicState: DownloadState;
   composeState: DownloadState;
   onDownloadSelectedImage: () => void;
   onDownloadSelectedVideo: () => void;
-  onDownloadMixedMusic: () => void;
   onOpenComposeModal: () => void;
   onDownloadLiveImages: () => void;
   onDownloadLiveVideos: () => void;
@@ -38,7 +34,6 @@ interface MixedLivePhotoCardProps {
  * 混合实况照片预览与下载卡片（支持多实况切换、批量下载）。
  */
 export function MixedLivePhotoCard({
-  video,
   livePhotos,
   selectedLiveIndex,
   onPrev,
@@ -48,11 +43,9 @@ export function MixedLivePhotoCard({
   onToggleBatch,
   imageState,
   videoState,
-  musicState,
   composeState,
   onDownloadSelectedImage,
   onDownloadSelectedVideo,
-  onDownloadMixedMusic,
   onOpenComposeModal,
   onDownloadLiveImages,
   onDownloadLiveVideos,
@@ -211,30 +204,7 @@ export function MixedLivePhotoCard({
           </motion.div>
         )}
 
-        {video.musicUrl ? (
-          <motion.div variants={itemVariants}>
-            <GlassAudioControls
-              src={buildStreamUrl(video.musicUrl)}
-              showLabel={false}
-              className="w-full"
-            />
-          </motion.div>
-        ) : (
-          <motion.div variants={itemVariants}>
-            <DownloadButton
-              state={musicState}
-              idleIcon={Music}
-              label="点击获取原帖背景音乐"
-              loadingLabel="正在获取背景音乐..."
-              doneLabel="背景音乐已获取，可在上方播放"
-              onClick={onDownloadMixedMusic}
-              animated={false}
-              className="w-full !py-2.5 !px-3 border border-dashed border-purple-400/30 hover:border-purple-400/60 disabled:opacity-60 text-xs"
-            />
-          </motion.div>
-        )}
-
-        <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <DownloadButton
             state={imageState}
             idleIcon={ImageIcon}
@@ -250,28 +220,17 @@ export function MixedLivePhotoCard({
             disabled={!currentLp?.videoUrl}
             title={!currentLp?.videoUrl ? "该实况无动态短片" : undefined}
           />
-
-          <DownloadButton
-            state={musicState}
-            idleIcon={Music}
-            label={video.musicUrl ? "背景音乐" : "获取音乐"}
-            loadingLabel="获取中"
-            onClick={onDownloadMixedMusic}
-            className={
-              !video.musicUrl ? "border border-dashed border-purple-400/40 disabled:opacity-60" : ""
-            }
-            title={!video.musicUrl ? "尝试从原帖获取背景音乐" : "下载背景音乐"}
-          />
         </motion.div>
 
         <motion.div variants={itemVariants}>
           <button
             onClick={onOpenComposeModal}
             disabled={composeState === "downloading"}
+            title="将静态图 + 实况短片 + 背景音乐 (BGM) 合成为完整视频"
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl py-2.5 text-xs font-semibold text-white flex items-center justify-center gap-2 disabled:opacity-60"
           >
             <Film className="h-3.5 w-3.5" />
-            合成完整视频（静态图 + 实况 + BGM）
+            合成实况视频
           </button>
         </motion.div>
 

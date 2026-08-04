@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
 import type { ParsedVideo } from "@/lib/parser";
 import {
   buildMediaProxyUrl,
@@ -42,7 +41,6 @@ export function LivePhotoPanel({
   /* ---- 下载动作（每个独立状态机） ---- */
   const imageDownload = useDownloadAction();
   const videoDownload = useDownloadAction();
-  const musicDownload = useDownloadAction();
   const composeDownload = useDownloadAction();
 
   const isLivePhotoPending = !!video.livePhotoPending;
@@ -71,15 +69,6 @@ export function LivePhotoPanel({
       url: buildProxyUrl(lp.videoUrl, `${baseName}_实况短片.mp4`),
       filename: `${baseName}_实况短片.mp4`,
       successMessage: "实况短片下载完成",
-    });
-  };
-
-  const handleDownloadLiveMusic = () => {
-    if (!lp?.musicUrl) return;
-    musicDownload.execute({
-      url: buildMediaProxyUrl(lp.musicUrl, `${baseName}_实况BGM.m4a`),
-      filename: `${baseName}_实况BGM.m4a`,
-      successMessage: "实况 BGM 下载完成",
     });
   };
 
@@ -123,24 +112,6 @@ export function LivePhotoPanel({
       url: buildProxyUrl(item.videoUrl, `${baseName}_实况${view.selectedLiveIndex + 1}_短片.mp4`),
       filename: `${baseName}_实况${view.selectedLiveIndex + 1}_短片.mp4`,
       successMessage: "实况短片下载完成",
-    });
-  };
-
-  /** 混合实况专用：下载 BGM（使用 video.musicUrl 而非 lp.musicUrl） */
-  const handleDownloadMixedMusic = async () => {
-    const musicSrc = video.musicUrl;
-    if (!musicSrc && !video.awemeId) {
-      toast.error("该帖子没有可下载的背景音乐");
-      return;
-    }
-    musicDownload.execute({
-      url: musicSrc
-        ? buildMediaProxyUrl(musicSrc, `${baseName}_背景音乐.m4a`)
-        : `/api/download-music?awemeId=${encodeURIComponent(video.awemeId)}&filename=${encodeURIComponent(`${baseName}_背景音乐.m4a`)}`,
-      filename: `${baseName}_背景音乐.m4a`,
-      successMessage: "背景音乐下载完成",
-      errorMessage: "背景音乐下载失败",
-      minBlobSize: musicSrc ? 0 : 1000,
     });
   };
 
@@ -285,11 +256,9 @@ export function LivePhotoPanel({
             lp={lp}
             imageState={imageDownload.state}
             videoState={videoDownload.state}
-            musicState={musicDownload.state}
             composeState={composeDownload.state}
             onDownloadImage={handleDownloadLiveImage}
             onDownloadVideo={handleDownloadLiveVideo}
-            onDownloadMusic={handleDownloadLiveMusic}
             onPreviewCompose={handlePreviewCompose}
             onComposeLive={handleComposeLiveVideo}
           />
@@ -297,29 +266,30 @@ export function LivePhotoPanel({
 
         {/* 混合实况：单实况风格预览与下载（支持多实况切换） */}
         {isMixedLivePhoto && livePhotos && livePhotos.length > 0 && !isLivePhotoPending && (
-          <MixedLivePhotoCard
-            video={video}
-            livePhotos={livePhotos}
-            selectedLiveIndex={view.selectedLiveIndex}
-            onPrev={() => view.prev(totalLive)}
-            onNext={() => view.next(totalLive)}
-            onSelectIndex={(i) => {
-              view.setSelectedLiveIndex(i);
-            }}
-            batchOpen={view.batchOpen}
-            onToggleBatch={() => view.setBatchOpen((o) => !o)}
-            imageState={imageDownload.state}
-            videoState={videoDownload.state}
-            musicState={musicDownload.state}
-            composeState={composeDownload.state}
-            onDownloadSelectedImage={handleDownloadSelectedLiveImage}
-            onDownloadSelectedVideo={handleDownloadSelectedLiveVideo}
-            onDownloadMixedMusic={handleDownloadMixedMusic}
-            onOpenComposeModal={onOpenComposeModal}
-            onDownloadLiveImages={handleDownloadLiveImages}
-            onDownloadLiveVideos={handleDownloadLiveVideos}
-            onComposeMixedLive={handleComposeMixedLive}
-          />
+          <>
+            {/* 与上方图片区做视觉分隔 */}
+            <div className="my-3 h-px bg-white/10" />
+            <MixedLivePhotoCard
+              livePhotos={livePhotos}
+              selectedLiveIndex={view.selectedLiveIndex}
+              onPrev={() => view.prev(totalLive)}
+              onNext={() => view.next(totalLive)}
+              onSelectIndex={(i) => {
+                view.setSelectedLiveIndex(i);
+              }}
+              batchOpen={view.batchOpen}
+              onToggleBatch={() => view.setBatchOpen((o) => !o)}
+              imageState={imageDownload.state}
+              videoState={videoDownload.state}
+              composeState={composeDownload.state}
+              onDownloadSelectedImage={handleDownloadSelectedLiveImage}
+              onDownloadSelectedVideo={handleDownloadSelectedLiveVideo}
+              onOpenComposeModal={onOpenComposeModal}
+              onDownloadLiveImages={handleDownloadLiveImages}
+              onDownloadLiveVideos={handleDownloadLiveVideos}
+              onComposeMixedLive={handleComposeMixedLive}
+            />
+          </>
         )}
       </AnimatePresence>
 

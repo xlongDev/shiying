@@ -56,10 +56,10 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video.awemeId]);
 
-  // 默认全选图片
+  // 图片默认不选中（用户手动勾选），但在图片变化时重置上一次的选择
   React.useEffect(() => {
     if (video.images && video.images.length > 0) {
-      selection.setSelected(new Set(video.images.map((_, i) => i)));
+      selection.setSelected(new Set());
     }
   }, [video.images, selection.setSelected]);
 
@@ -124,9 +124,12 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
       play("error");
       return;
     }
-    const filename = `${sanitizeFilename(video.desc)}_原声.m4a`;
+    const filename =
+      video.musicMeta && !video.musicMeta.isOriginalSound
+        ? `${sanitizeFilename(video.musicMeta.title)}.m4a`
+        : `${sanitizeFilename(video.desc)}_原声.m4a`;
     await downloader.downloadMusic(downloadUrl, filename);
-  }, [buildMusicDownloadUrl, video.desc, downloader, play]);
+  }, [buildMusicDownloadUrl, video.desc, video.musicMeta, downloader, play]);
 
   const handleDownloadImages = React.useCallback(async () => {
     if (!video.images) return;
@@ -309,6 +312,7 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
               selectedCount={selectedCount}
               totalImages={totalImages}
               musicPreviewSrc={musicPreviewSrc}
+              musicMeta={video.musicMeta ?? null}
               video={downloader.video}
               music={downloader.music}
               images={downloader.images}

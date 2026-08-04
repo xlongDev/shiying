@@ -139,6 +139,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* 明确的焦点环：与元素分离 2px，避免被误认为「选中态」边框 */
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
   html {
     scroll-behavior: smooth;
   }

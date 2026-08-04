@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Check, Music, Video, Image as ImageIcon, Loader2, Eye, Download } from "lucide-react";
+import { Check, Video, Image as ImageIcon, Loader2, Eye, Download } from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { GlassVideoControls } from "@/components/glass-video-controls";
-import { GlassAudioControls } from "@/components/glass-audio-controls";
 import { buildMediaProxyUrl, buildStreamUrl } from "@/lib/media-url";
 import type { LivePhotoInfo } from "@/lib/parser";
 import type { DownloadState } from "@/hooks/use-media-downloader";
@@ -14,11 +13,9 @@ interface SingleLivePhotoCardProps {
   lp: LivePhotoInfo;
   imageState: DownloadState;
   videoState: DownloadState;
-  musicState: DownloadState;
   composeState: DownloadState;
   onDownloadImage: () => void;
   onDownloadVideo: () => void;
-  onDownloadMusic: () => void;
   onPreviewCompose: () => void;
   onComposeLive: () => void;
 }
@@ -30,11 +27,9 @@ export function SingleLivePhotoCard({
   lp,
   imageState,
   videoState,
-  musicState,
   composeState,
   onDownloadImage,
   onDownloadVideo,
-  onDownloadMusic,
   onPreviewCompose,
   onComposeLive,
 }: SingleLivePhotoCardProps) {
@@ -113,17 +108,7 @@ export function SingleLivePhotoCard({
           </div>
         </motion.div>
 
-        {lp.musicUrl && (
-          <motion.div variants={itemVariants}>
-            <GlassAudioControls
-              src={buildStreamUrl(lp.musicUrl)}
-              showLabel={false}
-              className="w-full"
-            />
-          </motion.div>
-        )}
-
-        <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <motion.button
             onClick={onDownloadImage}
             disabled={imageState === "downloading"}
@@ -170,32 +155,6 @@ export function SingleLivePhotoCard({
               <>
                 <Video className="h-3.5 w-3.5" />
                 动态短片
-              </>
-            )}
-          </motion.button>
-
-          <motion.button
-            onClick={onDownloadMusic}
-            disabled={musicState === "downloading" || !lp.musicUrl}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="glass rounded-xl py-2 text-xs font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={!lp.musicUrl ? "该实况无背景音乐" : ""}
-          >
-            {musicState === "downloading" ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                下载中
-              </>
-            ) : musicState === "done" ? (
-              <>
-                <Check className="h-3.5 w-3.5" />
-                已下载
-              </>
-            ) : (
-              <>
-                <Music className="h-3.5 w-3.5" />
-                背景音乐
               </>
             )}
           </motion.button>
