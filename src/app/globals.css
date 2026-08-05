@@ -508,6 +508,23 @@
   animation: lp-pulse-text 1.8s ease-in-out infinite;
 }
 
+/* ===== 音乐封面 CD 旋转（download-button-row 使用） =====
+   圆形封面 + 中心孔营造 CD 质感；播放时匀速旋转，暂停时通过内联
+   animation-play-state 定格在当前角度（不归零、恢复时无缝继续）。
+   无障碍：文件末尾 prefers-reduced-motion 全局降级已关闭动画。 */
+@keyframes cd-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.cd-cover {
+  animation: cd-spin 10s linear infinite;
+  transform-origin: center;
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 10px;

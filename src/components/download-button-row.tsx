@@ -80,6 +80,9 @@ export function DownloadButtonRow({
   const isRegularImagePost =
     isImagePost && hasImages && !isLivePhoto && !isMixedLivePhoto && !isLivePhotoPending;
 
+  // 音乐播放状态：驱动封面 CD 旋转（由 GlassAudioControls 冒泡上来）
+  const [musicPlaying, setMusicPlaying] = React.useState(false);
+
   return (
     <div className="mt-auto space-y-2.5">
       {/* 主操作：固定 2 列；普通视频只保留 [预览视频][复制链接] */}
@@ -201,14 +204,25 @@ export function DownloadButtonRow({
           {musicMeta && (
             <div className="flex items-center gap-2.5 rounded-2xl glass px-3 py-2">
               {musicMeta.cover && (
-                // 外部 CDN 封面，用原生 img 避免 next/image 域名配置；lazy 加载
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={musicMeta.cover}
-                  alt=""
-                  loading="lazy"
-                  className="h-9 w-9 rounded-lg object-cover shrink-0"
-                />
+                <div
+                  className={cn(
+                    "relative h-9 w-9 shrink-0 rounded-full overflow-hidden cd-cover ring-1 ring-white/40 shadow-sm",
+                    !musicPlaying && "opacity-90"
+                  )}
+                  style={{ animationPlayState: musicPlaying ? "running" : "paused" }}
+                  aria-hidden="true"
+                >
+                  {/* 外部 CDN 封面，用原生 img 避免 next/image 域名配置；lazy 加载 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={musicMeta.cover}
+                    alt=""
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                  {/* CD 中心孔 */}
+                  <span className="pointer-events-none absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/90 shadow-[0_0_0_2px_rgba(0,0,0,0.12)]" />
+                </div>
               )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate flex items-center gap-1">
@@ -222,7 +236,17 @@ export function DownloadButtonRow({
             </div>
           )}
           {musicPreviewSrc && (
-            <GlassAudioControls src={musicPreviewSrc} showLabel={false} className="w-full" />
+            <GlassAudioControls
+              src={musicPreviewSrc}
+              showLabel={false}
+              className="w-full"
+              onPlayingChange={setMusicPlaying}
+              fileName={
+                musicMeta
+                  ? `${musicMeta.title}${musicMeta.author ? ` - ${musicMeta.author}` : ""}`
+                  : "背景音乐"
+              }
+            />
           )}
           <motion.button
             onClick={onDownloadMusic}

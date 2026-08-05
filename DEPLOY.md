@@ -11,7 +11,7 @@ docker build -t shiying .
 docker run -d --name shiying -p 3000:3000 shiying
 ```
 
-镜像内已安装 Chromium 与 ffmpeg，由 `chrome-finder` 自动探测，无需额外配置。
+镜像内已安装 Chromium、ffmpeg 与 Python 的 `makelive`，由相关探测逻辑自动识别，无需额外配置。
 如需自定义 Chrome 路径，可挂载并设置环境变量 `CHROME_PATH=/path/to/chrome`。
 
 ## 方式二：原生 Node（本机 / 家庭服务器 / 免费 VM）
@@ -22,7 +22,11 @@ pnpm build
 pnpm start      # 监听 3000
 ```
 
-前置条件：安装系统 Chrome（或设置 `CHROME_PATH`）与 `ffmpeg`（服务端音频提取用）。
+前置条件：
+- 系统 Chrome（或设置 `CHROME_PATH`）——无头浏览器实况兜底；
+- `ffmpeg` ——服务端转码与音频提取；
+- Python 3 + `makelive`（`pip install makelive`）——「保存为苹果实况照片」功能依赖。
+  三者缺一时对应能力自动降级（`/api/health` 的 `appleLivePhoto` 字段为 `false`，UI 隐藏入口）。
 
 ## 免费且永不停机的落地建议
 
@@ -44,5 +48,5 @@ pnpm start      # 监听 3000
 
 ## 健康检查
 
-`GET /api/health` 返回 `{ ok, chrome, livePhotoService, degraded, message }`，
-可据此判断解析后端是否可用（无 Chrome 且无服务桥时 `degraded: true`）。
+`GET /api/health` 返回 `{ ok, chrome, livePhotoService, appleLivePhoto, degraded, message }`，
+可据此判断解析后端是否可用（无 Chrome 且无服务桥时 `degraded: true`；`appleLivePhoto` 表示能否保存苹果实况照片）。

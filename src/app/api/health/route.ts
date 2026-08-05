@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getParseCapability } from "@/lib/parse-capability";
+import { getAppleLivePhotoCapability } from "@/lib/apple-live-photo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,14 +11,17 @@ export const dynamic = "force-dynamic";
  *
  * - chrome: 是否找到系统 Chrome（浏览器兜底可用）
  * - livePhotoService: 是否配置 LIVE_PHOTO_SERVICE_URL（国内 IP 签名桥）
+ * - appleLivePhoto: 是否可保存苹果实况照片（零依赖，恒为 true）
  * - degraded: 无 Chrome 且无服务 → 海外/无头环境下主解析必然失败
  */
 export async function GET() {
   const cap = await getParseCapability();
+  const apple = getAppleLivePhotoCapability();
   return NextResponse.json({
     ok: true,
     chrome: cap.chromeAvailable,
     livePhotoService: cap.serviceConfigured,
+    appleLivePhoto: apple.available,
     degraded: cap.degraded,
     message: cap.degraded
       ? "解析后端不可用：请自托管并安装 Chrome，或配置 LIVE_PHOTO_SERVICE_URL（国内 IP 签名桥）"

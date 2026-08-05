@@ -73,6 +73,7 @@ describe("MixedLivePhotoCard", () => {
     render(<MixedLivePhotoCard {...makeProps({ batchOpen: true })} />);
     expect(screen.getByText("全部原图")).toBeInTheDocument();
     expect(screen.getByText("全部短片")).toBeInTheDocument();
+    expect(screen.getByText("全部实况")).toBeInTheDocument();
     expect(screen.getByText("快速合并")).toBeInTheDocument();
   });
 

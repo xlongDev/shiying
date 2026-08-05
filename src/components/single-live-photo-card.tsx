@@ -6,6 +6,7 @@ import { Check, Video, Image as ImageIcon, Loader2, Eye, Download } from "lucide
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { GlassVideoControls } from "@/components/glass-video-controls";
 import { buildMediaProxyUrl, buildStreamUrl } from "@/lib/media-url";
+import { useAppleLivePhoto } from "@/hooks/use-apple-live-photo";
 import type { LivePhotoInfo } from "@/lib/parser";
 import type { DownloadState } from "@/hooks/use-media-downloader";
 
@@ -34,6 +35,7 @@ export function SingleLivePhotoCard({
   onComposeLive,
 }: SingleLivePhotoCardProps) {
   const reduce = useReducedMotion();
+  const { state: appleState, error: appleError, create: createApple } = useAppleLivePhoto();
   const containerVariants = {
     hidden: {},
     show: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
@@ -77,7 +79,7 @@ export function SingleLivePhotoCard({
             1 张
           </span>
           <span className="text-[10px] text-muted-foreground ml-auto">
-            含静态图 · 动态短片 · 背景音乐
+            含静态图 · 动态短片 · 原声
           </span>
         </motion.div>
 
@@ -198,6 +200,36 @@ export function SingleLivePhotoCard({
             </motion.button>
           </motion.div>
         )}
+
+        <motion.div variants={itemVariants} className="space-y-2">
+          <motion.button
+            onClick={() => createApple(lp)}
+            disabled={appleState === "preparing" || appleState === "downloading"}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full rounded-xl py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white disabled:opacity-60 transition-transform"
+          >
+            {appleState === "preparing" || appleState === "downloading" ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                打包中...
+              </>
+            ) : appleState === "done" ? (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                已保存
+              </>
+            ) : (
+              <>
+                <LivePhotoIcon size={14} />
+                保存为苹果实况照片
+              </>
+            )}
+          </motion.button>
+          {appleState === "error" && appleError && (
+            <p className="text-[11px] text-red-500/90">{appleError}</p>
+          )}
+        </motion.div>
       </motion.div>
     </motion.div>
   );

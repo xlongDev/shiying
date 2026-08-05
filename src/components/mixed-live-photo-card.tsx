@@ -2,12 +2,21 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Film, Video, Image as ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Film,
+  Video,
+  Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Check,
+} from "lucide-react";
 import { LivePhotoIcon } from "@/components/live-photo-icon";
 import { DownloadButton } from "@/components/download-button";
 import { GlassVideoControls } from "@/components/glass-video-controls";
 import { cn } from "@/lib/utils";
 import { buildMediaProxyUrl, buildStreamUrl } from "@/lib/media-url";
+import { useAppleLivePhoto } from "@/hooks/use-apple-live-photo";
 import type { LivePhotoInfo } from "@/lib/parser";
 import type { DownloadState } from "@/hooks/use-media-downloader";
 
@@ -54,6 +63,14 @@ export function MixedLivePhotoCard({
   const reduce = useReducedMotion();
   const slideY = reduce ? 0 : 12;
   const exitY = reduce ? 0 : -8;
+
+  const {
+    state: appleState,
+    error: appleError,
+    create: createApple,
+    createBatch: createAppleBatch,
+    batchProgress,
+  } = useAppleLivePhoto();
 
   const containerVariants = {
     hidden: {},
@@ -129,7 +146,7 @@ export function MixedLivePhotoCard({
             </div>
           )}
           <span className="text-[10px] text-muted-foreground ml-auto">
-            含静态图 · 动态短片 · 背景音乐
+            含静态图 · 动态短片 · 原声
           </span>
         </motion.div>
 
@@ -263,7 +280,7 @@ export function MixedLivePhotoCard({
                   variants={batchContainerVariants}
                   initial="hidden"
                   animate={batchOpen ? "show" : "hidden"}
-                  className="grid grid-cols-3 gap-1.5 mt-2 pl-4"
+                  className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2 pl-4"
                 >
                   <DownloadButton
                     state={imageState}
@@ -281,6 +298,33 @@ export function MixedLivePhotoCard({
                     animated={false}
                     className="!py-1.5 text-[10px] rounded-lg"
                   />
+                  <button
+                    onClick={() => createAppleBatch(livePhotos, "live_photo")}
+                    disabled={appleState === "preparing" || appleState === "downloading"}
+                    className="glass rounded-lg py-1.5 text-[10px] font-medium flex items-center justify-center gap-1 hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="把全部实况照片打包成苹果 Live Photo（.pvt）"
+                  >
+                    {appleState === "preparing" || appleState === "downloading" ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span className="text-xs">
+                          {batchProgress
+                            ? `实况 ${batchProgress.current}/${batchProgress.total}`
+                            : "打包中"}
+                        </span>
+                      </>
+                    ) : appleState === "done" ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        <span className="text-xs text-emerald-600">已保存</span>
+                      </>
+                    ) : (
+                      <>
+                        <LivePhotoIcon size={12} />
+                        <span className="text-xs">全部实况</span>
+                      </>
+                    )}
+                  </button>
                   <DownloadButton
                     state={composeState}
                     idleIcon={Film}
@@ -294,6 +338,36 @@ export function MixedLivePhotoCard({
             </div>
           </motion.div>
         )}
+
+        <motion.div variants={itemVariants} className="space-y-2">
+          <motion.button
+            onClick={() => createApple(currentLp)}
+            disabled={!currentLp || appleState === "preparing" || appleState === "downloading"}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full rounded-xl py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white disabled:opacity-60 transition-transform"
+          >
+            {appleState === "preparing" || appleState === "downloading" ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                打包中...
+              </>
+            ) : appleState === "done" ? (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                已保存
+              </>
+            ) : (
+              <>
+                <LivePhotoIcon size={14} />
+                保存为苹果实况照片
+              </>
+            )}
+          </motion.button>
+          {appleState === "error" && appleError && (
+            <p className="text-[11px] text-red-500/90">{appleError}</p>
+          )}
+        </motion.div>
       </motion.div>
     </motion.div>
   );

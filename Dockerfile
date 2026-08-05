@@ -10,10 +10,14 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# 系统依赖：Chromium（无头浏览器兜底）/ ffmpeg（服务端音频提取）/ curl（容器健康检查）
+# 系统依赖：Chromium（无头浏览器兜底）/ ffmpeg（服务端转码 + 音频提取）/
+# python3 + pip（苹果实况照片打包 makelive）/ curl（容器健康检查）
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium ffmpeg curl \
+  && apt-get install -y --no-install-recommends chromium ffmpeg python3 python3-pip curl \
   && rm -rf /var/lib/apt/lists/*
+
+# 苹果实况照片（.pvt）打包依赖：makelive（把 JPG + MOV 合成 .pvt 目录）
+RUN python3 -m pip install --no-cache-dir makelive
 
 # pnpm 由 corepack 提供，版本锁定于 package.json 的 packageManager 字段
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate

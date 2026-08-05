@@ -16,6 +16,7 @@ describe("GET /api/health", () => {
     expect(body.ok).toBe(true);
     expect(typeof body.chrome).toBe("boolean");
     expect(typeof body.livePhotoService).toBe("boolean");
+    expect(typeof body.appleLivePhoto).toBe("boolean");
     expect(typeof body.degraded).toBe("boolean");
     expect(typeof body.message).toBe("string");
   });

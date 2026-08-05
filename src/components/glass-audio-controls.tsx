@@ -6,17 +6,29 @@ import { formatTime } from "@/lib/format-time";
 import { SpeedMenu } from "@/components/glass/speed-menu";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 
+/** 构造音频下载文件名；fileName 不含扩展名，统一追加 .mp3 */
+export function buildAudioDownloadName(fileName?: string): string {
+  const name = fileName?.trim() || "背景音乐";
+  return `${name}.mp3`;
+}
+
 interface GlassAudioControlsProps {
   src: string;
   className?: string;
   /** 是否显示左上角「背景音乐」标签；在已经带有标题的场景中可关闭以避免重复 */
   showLabel?: boolean;
+  /** 下载时使用的文件名（不含扩展名）；会统一追加 .mp3 */
+  fileName?: string;
+  /** 播放状态变化回调（封面 CD 旋转等场景需要获知），playing 变化时触发 */
+  onPlayingChange?: (playing: boolean) => void;
 }
 
 export function GlassAudioControls({
   src,
   className = "",
   showLabel = true,
+  fileName,
+  onPlayingChange,
 }: GlassAudioControlsProps) {
   const player = useAudioPlayer({ src });
 
@@ -55,16 +67,22 @@ export function GlassAudioControls({
     handleAudioEnded,
   } = player;
 
+  // 把播放状态冒泡给上层（如封面 CD 旋转）
+  React.useEffect(() => {
+    onPlayingChange?.(playing);
+  }, [playing, onPlayingChange]);
+
   const downloadAudio = () => {
     const a = audioRef.current;
     if (!a || !a.src) return;
+    const name = buildAudioDownloadName(fileName);
     fetch(a.src)
       .then((r) => r.blob())
       .then((blob) => {
         const url = URL.createObjectURL(blob);
         const el = document.createElement("a");
         el.href = url;
-        el.download = "背景音乐.mp3";
+        el.download = name;
         el.click();
         URL.revokeObjectURL(url);
       })

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
-import { GlassAudioControls } from "@/components/glass-audio-controls";
+import { GlassAudioControls, buildAudioDownloadName } from "@/components/glass-audio-controls";
 
 const SRC = "https://example.com/audio.mp3";
 
@@ -50,5 +50,32 @@ describe("GlassAudioControls", () => {
 
     fireEvent.click(screen.getByText("0.5x"));
     expect(screen.queryByText("0.5x")).not.toBeInTheDocument();
+  });
+
+  it("有 fileName 时使用「歌曲名 - 作者.mp3」", () => {
+    expect(buildAudioDownloadName("自由自在 - 朗鹅鎏汐")).toBe("自由自在 - 朗鹅鎏汐.mp3");
+  });
+
+  it("未提供 fileName 时回退为 背景音乐.mp3", () => {
+    expect(buildAudioDownloadName(undefined)).toBe("背景音乐.mp3");
+    expect(buildAudioDownloadName("")).toBe("背景音乐.mp3");
+    expect(buildAudioDownloadName("   ")).toBe("背景音乐.mp3");
+  });
+
+  it("播放状态变化时通过 onPlayingChange 冒泡（封面 CD 旋转等场景）", () => {
+    const onPlayingChange = vi.fn();
+    render(<GlassAudioControls src={SRC} onPlayingChange={onPlayingChange} />);
+    const audio = document.querySelector("audio") as HTMLAudioElement;
+    vi.spyOn(audio, "play").mockResolvedValue(undefined);
+
+    // 挂载时至少回调一次（初始 false）
+    expect(onPlayingChange).toHaveBeenCalledWith(false);
+
+    fireEvent.click(screen.getByLabelText("播放"));
+    fireEvent.play(audio);
+    expect(onPlayingChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.pause(audio);
+    expect(onPlayingChange).toHaveBeenLastCalledWith(false);
   });
 });
