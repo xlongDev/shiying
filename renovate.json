@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard", ":semanticCommits"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "non-major dependencies",
+      "groupSlug": "non-major",
+      "rangeStrategy": "bump"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "separateMajorMinor": true,
+      "groupName": "major dependencies (review manually)",
+      "groupSlug": "major",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "matchPackagePatterns": ["^@ffmpeg/", "^puppeteer-core", "^jszip"],
+      "enabled": false,
+      "description": "服务端原生/wasm 依赖锁定版本，避免自动升级引入运行时不兼容（自托管场景需手动验证 Chrome/ffmpeg）。"
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  }
+}

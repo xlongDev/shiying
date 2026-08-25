@@ -8,6 +8,7 @@ vi.mock("./ffmpeg", () => ({
   resolveFfmpegBin: vi.fn(() => "ffmpeg"),
   runCommand: vi.fn(async () => undefined),
   buildImageToJpegArgs: vi.fn(() => []),
+  transcodeImageToJpeg: vi.fn(() => Buffer.from([0xff, 0xd8, 0xff, 0xd9])),
 }));
 
 import { createAppleLivePhotoPackage } from "./package";

@@ -22,7 +22,12 @@
  */
 import { logger } from "./logger";
 import { acquirePage, releasePage, navigateAndWait, DESKTOP_UA } from "./browser-pool";
-import { extractRouterData, findItemInRouterData, MOBILE_UA } from "./parser/extract";
+import {
+  extractRouterData,
+  findItemInRouterData,
+  findItemInApiJson,
+  MOBILE_UA,
+} from "./parser/extract";
 
 /**
  * 在浏览器上下文内读取 window._ROUTER_DATA（优先），缺失时回退扫描内联 <script>。
@@ -286,8 +291,35 @@ export async function loadRouterDataViaBrowser(
     { url: `https://www.douyin.com/video/${awemeId}`, ua: "desktop" },
   ];
 
+  // 收集导航期间抖音内部 API 的 JSON 响应（aweme 详情等）。
+  // 直接拦截响应体比遍历 React fiber 树更稳健——抖音现已不再 SSR 内嵌
+  // item_list，而是页面加载后用真实浏览器签名拉取内部 API（如
+  // /aweme/v1/web/aweme/detail/），该响应即完整 aweme item 来源。
+  const captured: { url: string; body: string }[] = [];
+  const onResponse = (resp: import("puppeteer-core").HTTPResponse) => {
+    const u = resp.url();
+    const ct = resp.headers()["content-type"] || "";
+    if (ct.includes("json") || /aweme|detail|item/.test(u)) {
+      resp
+        .text()
+        .then((body) => {
+          if (
+            body &&
+            (body.includes("aweme_detail") ||
+              body.includes("aweme_id") ||
+              body.includes("item_list"))
+          ) {
+            captured.push({ url: u, body });
+          }
+        })
+        .catch(() => {});
+    }
+  };
+  page.on("response", onResponse);
+
   try {
     for (const { url, ua } of candidates) {
+      captured.length = 0;
       // 根据目标域名设置对应 UA：iesdouyin 用移动端 UA 才能拿到 SSR 内嵌数据
       try {
         await page.setUserAgent(ua === "mobile" ? MOBILE_UA : DESKTOP_UA);
@@ -345,7 +377,26 @@ export async function loadRouterDataViaBrowser(
         }
       }
 
-      // 3) 尝试读取当前 window._ROUTER_DATA / 内联 script
+      // 3) 网络拦截优先：直接抓抖音内部 API 返回的 aweme 详情 JSON（最稳健路径）。
+      //    必须等 hydration / SPA 拉取完成后再扫描，此时 API 响应才已到达；
+      //    同时留出时间让在途的 resp.text() Promise 落盘，避免漏扫刚到达的响应。
+      await new Promise((r) => setTimeout(r, 600));
+      for (const c of captured) {
+        const item = findItemInApiJson(c.body, awemeId);
+        if (item) {
+          logger.info("aweme-detail", `浏览器兜底命中(网络拦截) ${c.url}`);
+          return item;
+        }
+      }
+      if (captured.length) {
+        const urls = captured.map((c) => c.url).join(" | ");
+        logger.warn(
+          "aweme-detail",
+          `浏览器兜底网络拦截到 ${captured.length} 个响应，但未解析出 item ${url}；响应URL: ${urls}`
+        );
+      }
+
+      // 4) 尝试读取当前 window._ROUTER_DATA / 内联 script
       let rd: string | null = null;
       try {
         rd = await page.evaluate(readRouterDataInPage);
@@ -366,7 +417,7 @@ export async function loadRouterDataViaBrowser(
         logger.warn("aweme-detail", `浏览器兜底读取到 _ROUTER_DATA 但未解析出 item ${url}`);
       }
 
-      // 4) _ROUTER_DATA 未命中：遍历 fiber 兜底（桌面端 SPA 数据可能只在 fiber 中）
+      // 5) _ROUTER_DATA 未命中：遍历 fiber 兜底（桌面端 SPA 数据可能只在 fiber 中）
       try {
         const fiberItem = await page.evaluate(extractItemFromFiberInPage, awemeId);
         if (fiberItem) {
@@ -389,6 +440,7 @@ export async function loadRouterDataViaBrowser(
     logger.warn("aweme-detail", "浏览器兜底未找到 item");
     return null;
   } finally {
+    page.off("response", onResponse);
     await releasePage(page);
   }
 }

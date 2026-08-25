@@ -1,5 +1,4 @@
 import { spawnSync } from "child_process";
-import fs from "fs";
 import path from "path";
 import os from "os";
 import { logger } from "./logger";
@@ -16,10 +15,13 @@ import { config } from "./config";
  *   - 自托管 Node 服务：安装 Chrome 并设置 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH；
  *   - Vercel 等无系统 Chrome 的 serverless 环境：因无浏览器，需配置
  *     LIVE_PHOTO_SERVICE_URL（部署在国内 IP 的 a_bogus 签名桥）才能解析。
+ *
+ * 仅通过 spawnSync 尝试拉起候选可执行文件判断可用性，不做 fs 读取，
+ * 以规避 Next/Turbopack 构建期 NFT 全目录追踪告警。
  */
 export async function findChromeExecutable(): Promise<string | null> {
   const envPath = config.chrome.executablePath;
-  if (envPath && fs.existsSync(envPath)) return envPath;
+  if (envPath && isExecutable(envPath)) return envPath;
 
   const platform = os.platform();
   const candidates: string[] = [];
@@ -40,10 +42,16 @@ export async function findChromeExecutable(): Promise<string | null> {
     ].filter(Boolean) as string[];
     for (const base of programFiles) {
       candidates.push(
-        path.join(base, "Google", "Chrome", "Application", "chrome.exe"),
-        path.join(base, "Google", "Chrome SxS", "Application", "chrome.exe"),
-        path.join(base, "Chromium", "Application", "chrome.exe"),
-        path.join(base, "Microsoft", "Edge", "Application", "msedge.exe")
+        path.join(/*turbopackIgnore: true*/ base, "Google", "Chrome", "Application", "chrome.exe"),
+        path.join(
+          /*turbopackIgnore: true*/ base,
+          "Google",
+          "Chrome SxS",
+          "Application",
+          "chrome.exe"
+        ),
+        path.join(/*turbopackIgnore: true*/ base, "Chromium", "Application", "chrome.exe"),
+        path.join(/*turbopackIgnore: true*/ base, "Microsoft", "Edge", "Application", "msedge.exe")
       );
     }
   } else {
@@ -62,7 +70,7 @@ export async function findChromeExecutable(): Promise<string | null> {
   }
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (isExecutable(candidate)) return candidate;
   }
 
   // 尝试 which/where 命令
@@ -73,7 +81,7 @@ export async function findChromeExecutable(): Promise<string | null> {
       { encoding: "utf-8", timeout: 5000 }
     );
     const found = result.stdout?.trim().split("\n")[0];
-    if (found && fs.existsSync(found)) return found;
+    if (found && isExecutable(found)) return found;
   } catch {
     // ignore
   }
@@ -83,4 +91,22 @@ export async function findChromeExecutable(): Promise<string | null> {
     "未找到 Chrome：浏览器兜底不可用。自托管请安装 Chrome 并设置 PUPPETEER_EXECUTABLE_PATH / CHROME_PATH；部署到 Vercel 等无系统 Chrome 的 serverless 环境请配置 LIVE_PHOTO_SERVICE_URL（国内 IP 签名桥）。"
   );
   return null;
+}
+
+/**
+ * 通过尝试以 --version 拉起候选可执行文件判断其是否存在且可用。
+ * 使用 spawnSync（同步）而非 fs.existsSync，避免对动态路径做 fs 读取而触发
+ * Next/Turbopack 构建期 NFT 全目录追踪告警；spawn 目标不被 nft 静态追踪。
+ */
+function isExecutable(candidate: string): boolean {
+  try {
+    const res = spawnSync(candidate, ["--version"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: "ignore",
+    });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
 }

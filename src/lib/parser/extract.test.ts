@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractMusicMetaFromSource } from "./extract";
+import { extractMusicMetaFromSource, findItemInApiJson } from "./extract";
 
 describe("extractMusicMetaFromSource", () => {
   it("提取汽水音乐（版权音乐）的真实歌名与作者", () => {
@@ -46,5 +46,51 @@ describe("extractMusicMetaFromSource", () => {
     expect(extractMusicMetaFromSource(null)).toBeNull();
     expect(extractMusicMetaFromSource({})).toBeNull();
     expect(extractMusicMetaFromSource("not an object")).toBeNull();
+  });
+});
+
+describe("findItemInApiJson", () => {
+  it("从 aweme_detail 单对象提取 item", () => {
+    const body = JSON.stringify({
+      status_code: 0,
+      aweme_detail: { aweme_id: "123", desc: "测试", author: {} },
+    });
+    const item = findItemInApiJson(body, "123");
+    expect(item).not.toBeNull();
+    expect(item!.aweme_id).toBe("123");
+  });
+
+  it("从 item_list 数组按 aweme_id 匹配", () => {
+    const body = JSON.stringify({
+      status_code: 0,
+      item_list: [
+        { aweme_id: "111", desc: "a" },
+        { aweme_id: "222", desc: "b", author: {} },
+      ],
+    });
+    const item = findItemInApiJson(body, "222");
+    expect(item).not.toBeNull();
+    expect(item!.aweme_id).toBe("222");
+  });
+
+  it("无 aweme_id 时回退取数组首项", () => {
+    const body = JSON.stringify({
+      item_list: [{ aweme_id: "999", desc: "x", author: {} }],
+    });
+    const item = findItemInApiJson(body);
+    expect(item!.aweme_id).toBe("999");
+  });
+
+  it("data.item_list 嵌套结构也能识别", () => {
+    const body = JSON.stringify({
+      data: { item_list: [{ aweme_id: "555", desc: "y", author: {} }] },
+    });
+    expect(findItemInApiJson(body, "555")!.aweme_id).toBe("555");
+  });
+
+  it("非 JSON 或不含 aweme 数据时返回 null", () => {
+    expect(findItemInApiJson("not json")).toBeNull();
+    expect(findItemInApiJson(JSON.stringify({ status_code: 1 }))).toBeNull();
+    expect(findItemInApiJson("")).toBeNull();
   });
 });

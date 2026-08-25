@@ -87,6 +87,24 @@ async function loadOptionalModule(name: string): Promise<unknown> {
   }
 }
 
+/** @upstash/ratelimit 最小可用类型（动态加载，避免静态依赖进入构建图）。 */
+interface UpstashRatelimitModule {
+  Ratelimit: new (opts: {
+    redis: unknown;
+    limiter: unknown;
+    prefix?: string;
+    analytics?: boolean;
+  }) => {
+    limit: (key: string) => Promise<{ success: boolean; remaining: number; reset: number }>;
+  };
+  slidingWindow: (limit: number, window: string) => unknown;
+}
+
+/** @upstash/redis 最小可用类型（动态加载，避免静态依赖进入构建图）。 */
+interface UpstashRedisModule {
+  Redis: new (opts: { url: string; token: string }) => unknown;
+}
+
 /**
  * 创建 Upstash Ratelimit 后端（滑动窗口）。
  * 未安装依赖或初始化失败时返回 null，由调用方回退内存限流。
@@ -102,9 +120,12 @@ async function createUpstashLimiter(
     loadOptionalModule("@upstash/redis"),
   ]);
 
-  const Ratelimit = (ratelimitMod as any)?.Ratelimit;
-  const slidingWindow = (ratelimitMod as any)?.slidingWindow;
-  const Redis = (redisMod as any)?.Redis;
+  // 动态加载结果经最小可用类型垫片收窄，消除 `as any`。
+  const ratelimit = ratelimitMod as UpstashRatelimitModule | null;
+  const redis = redisMod as UpstashRedisModule | null;
+  const Ratelimit = ratelimit?.Ratelimit;
+  const slidingWindow = ratelimit?.slidingWindow;
+  const Redis = redis?.Redis;
 
   if (!Ratelimit || !Redis || !slidingWindow) {
     logger.warn(
@@ -115,9 +136,9 @@ async function createUpstashLimiter(
     return null;
   }
 
-  const redis = new Redis({ url, token });
+  const redisClient = new Redis({ url, token });
   const rl = new Ratelimit({
-    redis,
+    redis: redisClient,
     limiter: slidingWindow(limit, `${Math.round(windowMs / 1000)} s`),
     prefix: "shiying_rl",
     analytics: false,

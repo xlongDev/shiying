@@ -19,18 +19,14 @@
  * 抖音 MP4 本身就是 H.264 + AAC，与实况短片要求一致，因此直接直通为 .MOV，
  * 不转码、不掉画质。ffmpeg 只在「封面非 JPEG」时才作为兜底转码用到。
  */
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import JSZip from "jszip";
 import { fetchWithTimeout } from "../http";
 import { buildUpstreamHeaders } from "../cdn";
 import { isAllowedTarget } from "../ssrf";
 import { sanitizeFilename } from "../media-url";
 import { isJpeg, writeJpegContentIdentifier } from "./jpeg-content-id";
 import { writeMovContentIdentifier } from "./mov-content-id";
-import { buildImageToJpegArgs, hasFfmpeg, resolveFfmpegBin, runCommand } from "./ffmpeg";
+import { hasFfmpeg, transcodeImageToJpeg } from "./ffmpeg";
 
 export interface AppleLivePhotoInput {
   /** 静帧原图 CDN URL。若提供了 coverBuffer，此项仅作兜底。 */
@@ -99,19 +95,16 @@ async function downloadBinary(url: string): Promise<Buffer> {
 /**
  * 封面若不是 JPEG（抖音现在统一下发 WebP），在有 ffmpeg 时转码。
  * 正常路径下浏览器已用 canvas 转好并上传，这里只是兜底。
+ * 转码全程内存 I/O（pipe:0 喂入 / pipe:1 收回），不落临时文件。
  */
-async function ensureJpegCover(cover: Buffer, workDir: string): Promise<Buffer> {
+async function ensureJpegCover(cover: Buffer): Promise<Buffer> {
   if (isJpeg(cover)) return cover;
   if (!hasFfmpeg()) {
     throw userError(
       "封面不是 JPEG（抖音下发 WebP），浏览器端转码未生效；请换用支持 canvas 的现代浏览器重试，或在服务端安装 ffmpeg / 设置 FFMPEG_PATH"
     );
   }
-  const src = join(workDir, "cover.src");
-  const out = join(workDir, "cover.jpg");
-  writeFileSync(src, cover);
-  await runCommand(resolveFfmpegBin(), buildImageToJpegArgs({ input: src, out }));
-  return readFileSync(out);
+  return transcodeImageToJpeg(cover);
 }
 
 /**
@@ -132,13 +125,12 @@ export async function createAppleLivePhotoPackage(
     }
   }
 
-  const workDir = mkdtempSync(join(tmpdir(), "apple-lp-"));
   const [rawCover, rawVideo] = await Promise.all([
     input.coverBuffer ? Promise.resolve(input.coverBuffer) : downloadBinary(input.imageUrl),
     downloadBinary(input.videoUrl),
   ]);
 
-  const cover = await ensureJpegCover(rawCover, workDir);
+  const cover = await ensureJpegCover(rawCover);
   const video = rawVideo;
 
   // 关键：两个文件写入同一个 UUID，系统据此配对
@@ -147,6 +139,13 @@ export async function createAppleLivePhotoPackage(
   const taggedJpg = writeJpegContentIdentifier(cover, assetId);
   const taggedMov = writeMovContentIdentifier(video, assetId);
 
+  // specifier 必须依赖 process.env（编译期不可判定），让 Turbopack 无法静态解析 → 完全不追踪 jszip。
+  // 关键陷阱：纯字面量 import("jszip") 或 const 字符串变量都会被 esbuild 常量折叠回 "jszip"，
+  // 此时 /* webpackIgnore: true */ 注释失效，Turbopack 仍会追踪进 node_modules 触发「整仓追踪」。
+  // 只有 spec 含 process.env（如 extract-audio 的 `process.env.FFMPEG_PATH || "ffmpeg-static"`），
+  // 编译期不可判定 → Turbopack 当作动态 import 彻底不追踪。运行时 ?? 兜底仍是 "jszip"。
+  const jszipSpec = process.env.JSZIP_PKG ?? "jszip";
+  const JSZip = (await import(/* webpackIgnore: true */ jszipSpec)).default;
   const zip = new JSZip();
   const pvt = zip.folder(`${base}.pvt`);
   if (!pvt) throw new Error("创建 .pvt 目录失败");

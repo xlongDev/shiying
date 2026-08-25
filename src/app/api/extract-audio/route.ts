@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardRateLimit } from "@/lib/rate-limit-guard";
 import { spawn } from "child_process";
-import fs from "fs";
-import os from "os";
 import path from "path";
-import { Readable } from "stream";
 import { ffmpegSemaphore } from "@/lib/concurrency";
 import { logger } from "@/lib/logger";
 import { isAllowedTarget } from "@/lib/ssrf";
@@ -21,16 +18,15 @@ export const maxDuration = 300;
  *
  * 流程：
  *   1. 获取视频流（与 /api/proxy 相同的 header 处理）
- *   2. 将视频流写入临时文件
- *   3. 调用 ffmpeg 从临时文件提取音频并转码为 MP3
+ *   2. 视频流读入内存 Buffer
+ *   3. 调用 ffmpeg 从 stdin 读取视频、向 stdout 写出 MP3（pipe 模式，不落盘）
  *   4. 返回 MP3 文件给客户端下载
- *   5. 清理临时文件
  *
  * 安全加固：
  *   - SSRF：用户传入的 targetUrl 经 isAllowedTarget 校验白名单 + 非内网 IP（含 snssdk 重定向后再校验）。
  *   - ffmpeg 并发受 ffmpegSemaphore 限制（最多 2 个），release 在 finally 中执行。
  *   - getFfmpegPath() 结果在模块作用域缓存，避免每次调用都重新探测。
- *   - 临时文件在所有返回 / 异常路径均由外层 finally 统一清理。
+ *   - 全程内存处理、不写临时文件，规避 Next/Turbopack 构建期 NFT 全目录追踪告警。
  */
 // 模块级缓存：ffmpeg 探测结果只计算一次。
 let cachedFfmpegPath: string | undefined;
@@ -43,8 +39,6 @@ export async function GET(req: NextRequest) {
   const targetUrl = searchParams.get("url");
   const filename = searchParams.get("filename") || "audio.mp3";
   const preview = searchParams.get("preview") === "1";
-  let videoTempPath = "";
-  let audioTempPath = "";
 
   if (!targetUrl) {
     return NextResponse.json({ ok: false, error: "缺少 url 参数" }, { status: 400 });
@@ -65,113 +59,30 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // 获取真实视频 URL（处理 snssdk 重定向）
-    let finalUrl = targetUrl;
-    const isSnssdk = targetUrl.includes("snssdk") && targetUrl.includes("/play");
-    if (isSnssdk) {
-      try {
-        const probe = await fetch(targetUrl, {
-          headers: buildUpstreamHeaders(targetUrl),
-          redirect: "manual",
-        });
-        if (probe.status >= 300 && probe.status < 400) {
-          const loc = probe.headers.get("location");
-          if (loc) {
-            finalUrl = new URL(loc, targetUrl).toString();
-            // 重定向后的地址可能来自不同主机，需再次做 SSRF 校验。
-            if (!(await isAllowedTarget(finalUrl))) {
-              return NextResponse.json({ ok: false, error: "禁止访问该地址" }, { status: 403 });
-            }
-          }
-        }
-      } catch {
-        // 使用原始 URL
-      }
+    let videoBuffer = await downloadVideo(targetUrl);
+    if (!videoBuffer) {
+      return NextResponse.json({ ok: false, error: "获取视频流失败" }, { status: 502 });
     }
 
-    // 下载视频流到临时文件
-    const videoRes = await fetch(finalUrl, {
-      headers: buildUpstreamHeaders(finalUrl),
-      redirect: "follow",
-    });
-
-    if (!videoRes.ok || !videoRes.body) {
-      logger.error(
-        "extract-audio",
-        `upstream failed: ${videoRes.status} for ${finalUrl.substring(0, 120)}`
-      );
-      return NextResponse.json(
-        { ok: false, error: `获取视频流失败：HTTP ${videoRes.status}` },
-        { status: 502 }
-      );
-    }
-
-    const contentType = videoRes.headers.get("content-type") || "";
-
-    // 简单校验：返回的是 JSON 或 HTML 错误页（不是视频流）
-    if (contentType.includes("json") || contentType.includes("html")) {
-      logger.error("extract-audio", `upstream returned non-video content-type: ${contentType}`);
-      return NextResponse.json(
-        { ok: false, error: "上游返回的不是视频流，无法提取音频" },
-        { status: 502 }
-      );
-    }
-
-    // 写入临时视频文件
-    videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}.mp4`);
-    audioTempPath = path.join(os.tmpdir(), `extract-audio-audio-${Date.now()}.mp3`);
-
-    await streamToFile(
-      videoRes.body as unknown as import("stream/web").ReadableStream,
-      videoTempPath
-    );
-
-    // 检查视频文件大小 — 如果太小，尝试 snssdk play URL 重试
-    let videoStats = fs.statSync(videoTempPath);
-    const videoTooSmall = videoStats.size < 10240; // 10KB 阈值
-
-    if (videoTooSmall) {
+    // 视频过小则尝试 snssdk play URL 重试
+    if (videoBuffer.byteLength < 10240) {
       logger.warn(
         "extract-audio",
-        `downloaded video too small (${videoStats.size} bytes), trying snssdk retry`
+        `downloaded video too small (${videoBuffer.byteLength} bytes), trying snssdk retry`
       );
-
-      // 优先从 URL 中提取 video_id 构造 snssdk URL 重试。
-      // 注：iesdouyin iteminfo 签名 API 现返回 11110(encrypt_data_miss) 已废弃，不再作为兜底；
-      // 若 CDN URL 不含 video_id 则无法自动恢复，下方最终检查将返回 502（视频流为空）。
       const videoId = extractVideoId(targetUrl);
       if (videoId) {
-        try {
-          // 删除已被覆盖的旧临时文件，再重新分配路径
-          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
-          // 重新生成临时文件路径
-          videoTempPath = path.join(os.tmpdir(), `extract-audio-video-${Date.now()}-v2.mp4`);
-
-          const snssdkUrl = `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`;
-          logger.info("extract-audio", `retrying with snssdk: ${snssdkUrl}`);
-
-          const snssdkRes = await fetch(snssdkUrl, {
-            headers: buildUpstreamHeaders(snssdkUrl),
-            redirect: "follow",
-          });
-
-          if (snssdkRes.ok && snssdkRes.body) {
-            await streamToFile(
-              snssdkRes.body as unknown as import("stream/web").ReadableStream,
-              videoTempPath
-            );
-            videoStats = fs.statSync(videoTempPath);
-            logger.info("extract-audio", `snssdk retry downloaded ${videoStats.size} bytes`);
-          }
-        } catch (retryErr) {
-          logger.error("extract-audio", "snssdk retry failed:", retryErr);
-          if (fs.existsSync(videoTempPath)) fs.unlinkSync(videoTempPath);
+        const snssdkUrl = `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`;
+        logger.info("extract-audio", `retrying with snssdk: ${snssdkUrl}`);
+        const retry = await downloadVideo(snssdkUrl);
+        if (retry && retry.byteLength >= 10240) {
+          videoBuffer = retry;
         }
       }
     }
 
-    // 最终检查视频文件大小
-    if (videoStats.size < 10240) {
+    // 最终检查视频大小
+    if (videoBuffer.byteLength < 10240) {
       return NextResponse.json(
         { ok: false, error: "下载的视频流为空，无法提取音频" },
         { status: 502 }
@@ -180,35 +91,32 @@ export async function GET(req: NextRequest) {
 
     // 调用 ffmpeg 提取音频（并发受信号量限制）
     await ffmpegSemaphore.acquire();
+    let audioBuffer: Buffer;
     try {
-      await extractAudioWithFfmpeg(ffmpegPath, videoTempPath, audioTempPath);
+      audioBuffer = await extractAudioWithFfmpeg(ffmpegPath, videoBuffer);
     } finally {
       ffmpegSemaphore.release();
     }
 
-    // 检查音频文件大小
-    const audioStats = fs.statSync(audioTempPath);
-    if (audioStats.size < 1024) {
+    // 检查音频大小
+    if (audioBuffer.byteLength < 1024) {
       return NextResponse.json(
         { ok: false, error: "提取的音频文件为空，该视频可能没有音轨" },
         { status: 502 }
       );
     }
 
-    // 读取音频文件并返回（读取完成后再清理临时文件）
-    const audioBuffer = fs.readFileSync(audioTempPath);
-
     const responseHeaders = new Headers({
       "Content-Type": "audio/mpeg",
       "Content-Disposition": preview
         ? "inline"
         : `attachment; filename="${encodeURIComponent(filename)}"`,
-      "Content-Length": String(audioStats.size),
+      "Content-Length": String(audioBuffer.byteLength),
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
     });
 
-    return new NextResponse(audioBuffer, {
+    return new NextResponse(new Uint8Array(audioBuffer), {
       status: 200,
       headers: responseHeaders,
     });
@@ -218,15 +126,6 @@ export async function GET(req: NextRequest) {
       { ok: false, error: err instanceof Error ? err.message : "音频提取失败" },
       { status: 500 }
     );
-  } finally {
-    // 所有路径统一清理临时文件（成功 / 早返回 / 异常）
-    for (const p of [videoTempPath, audioTempPath]) {
-      try {
-        if (p && fs.existsSync(p)) fs.unlinkSync(p);
-      } catch {
-        // 忽略清理错误
-      }
-    }
   }
 }
 
@@ -247,10 +146,48 @@ function extractVideoId(url: string): string | null {
 }
 
 /**
- * 注：原 iesdouyin iteminfo 签名 API 兜底（getVideoIdFromApi / getDirectVideoUrl）
- * 现返回 status_code:11110(encrypt_data_miss) 已废弃，已移除。视频流过小且 CDN URL
- * 不含 video_id 时无法自动恢复，交由下方最终检查返回 502，不再静默重试失效 API。
+ * 下载视频流为内存 Buffer（含 SSRF 重定向二次校验 + 非视频内容类型拦截）。
+ * 注：iesdouyin iteminfo 签名 API 兜底已废弃（status_code:11110），
+ * CDN URL 不含 video_id 时无法自动恢复，交由上层返回 502。
  */
+async function downloadVideo(rawUrl: string): Promise<Buffer | null> {
+  let finalUrl = rawUrl;
+  const isSnssdk = rawUrl.includes("snssdk") && rawUrl.includes("/play");
+  if (isSnssdk) {
+    try {
+      const probe = await fetch(rawUrl, {
+        headers: buildUpstreamHeaders(rawUrl),
+        redirect: "manual",
+      });
+      if (probe.status >= 300 && probe.status < 400) {
+        const loc = probe.headers.get("location");
+        if (loc) {
+          finalUrl = new URL(loc, rawUrl).toString();
+          // 重定向后的地址可能来自不同主机，需再次做 SSRF 校验。
+          if (!(await isAllowedTarget(finalUrl))) return null;
+        }
+      }
+    } catch {
+      /* 使用原始 URL */
+    }
+  }
+
+  const videoRes = await fetch(finalUrl, {
+    headers: buildUpstreamHeaders(finalUrl),
+    redirect: "follow",
+  });
+
+  if (!videoRes.ok || !videoRes.body) return null;
+
+  const contentType = videoRes.headers.get("content-type") || "";
+  // 简单校验：返回的是 JSON 或 HTML 错误页（不是视频流）
+  if (contentType.includes("json") || contentType.includes("html")) {
+    logger.error("extract-audio", `upstream returned non-video content-type: ${contentType}`);
+    return null;
+  }
+
+  return Buffer.from(await videoRes.arrayBuffer());
+}
 
 /**
  * 查找可用的 ffmpeg 可执行文件路径（结果在模块作用域缓存）
@@ -268,9 +205,10 @@ async function getFfmpegPath(): Promise<string | null> {
   ];
 
   // serverless 回退：ffmpeg-static（仅在部署时安装该可选依赖后生效）。
+  // webpackIgnore: 交由运行时原生 import，构建期不静态解析、不进入 NFT 追踪。
   try {
     const spec: string = "ffmpeg-static";
-    const staticMod = (await import(/* @vite-ignore */ spec).catch(() => null)) as {
+    const staticMod = (await import(/* webpackIgnore: true */ spec).catch(() => null)) as {
       default?: string;
       path?: string;
     } | null;
@@ -309,32 +247,12 @@ function checkFfmpeg(ffmpegPath: string): Promise<boolean> {
   });
 }
 
-async function streamToFile(
-  readableStream: import("stream/web").ReadableStream,
-  filePath: string
-): Promise<void> {
-  const nodeStream = Readable.fromWeb(
-    readableStream as unknown as import("stream/web").ReadableStream
-  );
-  const writeStream = fs.createWriteStream(filePath);
-
+function extractAudioWithFfmpeg(ffmpegPath: string, videoBuffer: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    nodeStream.pipe(writeStream);
-    nodeStream.on("error", reject);
-    writeStream.on("finish", resolve);
-    writeStream.on("error", reject);
-  });
-}
-
-function extractAudioWithFfmpeg(
-  ffmpegPath: string,
-  videoPath: string,
-  audioPath: string
-): Promise<void> {
-  return new Promise((resolve, reject) => {
+    // 视频从 stdin (pipe:0) 读入；音频 MP3 直接写 stdout (pipe:1)，全程不落盘。
     const args = [
       "-i",
-      videoPath,
+      "pipe:0",
       "-vn",
       "-acodec",
       "libmp3lame",
@@ -345,11 +263,14 @@ function extractAudioWithFfmpeg(
       "-f",
       "mp3",
       "-y",
-      audioPath,
+      "pipe:1",
     ];
 
     const ffmpeg = spawn(ffmpegPath, args);
     const errorChunks: string[] = [];
+    const chunks: Buffer[] = [];
+
+    ffmpeg.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
 
     ffmpeg.stderr.on("data", (chunk: Buffer) => {
       errorChunks.push(chunk.toString());
@@ -358,19 +279,32 @@ function extractAudioWithFfmpeg(
       }
     });
 
-    ffmpeg.on("error", (err) => {
-      reject(err);
-    });
+    ffmpeg.on("error", (err) => reject(err));
 
     ffmpeg.on("close", (code) => {
       if (code === 0) {
-        resolve();
+        resolve(Buffer.concat(chunks));
       } else {
         const stderr = errorChunks.join("").slice(-1000);
         logger.error("extract-audio", `ffmpeg exited with code ${code}: ${stderr}`);
         reject(new Error(`ffmpeg 处理失败 (code ${code})`));
       }
     });
+
+    // 将视频 Buffer 写入 stdin（处理背压后关闭），ffmpeg 从 stdout 产出 MP3。
+    const finishStdin = (): void => {
+      try {
+        ffmpeg.stdin.end();
+      } catch {
+        /* ignore */
+      }
+    };
+    ffmpeg.stdin.on("error", (err) => reject(err));
+    if (ffmpeg.stdin.write(videoBuffer)) {
+      finishStdin();
+    } else {
+      ffmpeg.stdin.once("drain", finishStdin);
+    }
 
     setTimeout(() => {
       try {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-// 必须用命名空间导入：默认导入 (import fs from) 拿到的是真实模块的 default，
-// 会绕过下面 vi.mock 工厂替换的具名 existsSync。
-import * as fs from "node:fs";
+// 必须用命名空间导入：默认导入 (import cp from) 拿到的是真实模块的 default，
+// 会绕过下面 vi.mock 工厂替换的具名 execFileSync。
+import * as cp from "node:child_process";
 import {
   resolveFfmpegBin,
   isJpeg,
@@ -12,17 +12,18 @@ import {
   parseBoxes,
 } from "./apple-live-photo";
 
-// 用 vi.mock 替换 node:fs 的 existsSync，使模块内部的具名导入也指向 mock。
+// 用 vi.mock 替换 node:child_process 的 execFileSync，使模块内部的具名导入也指向 mock。
 // （具名导入是编译期绑定，vi.spyOn 无法拦截，必须用 vi.mock 整体替换模块。）
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+// resolveFfmpegBin 改用「执行 ffmpeg -version 探测」取代 existsSync，故此处 mock execFileSync。
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
   return {
     ...actual,
-    existsSync: vi.fn(),
+    execFileSync: vi.fn(),
   };
 });
 
-const mockExistsSync = fs.existsSync as ReturnType<typeof vi.fn>;
+const mockExec = cp.execFileSync as ReturnType<typeof vi.fn>;
 
 /** 最小合法 JPEG：SOI(ffd8) + EOI(ffd9)。 */
 function minimalJpeg(): Buffer {
@@ -60,7 +61,7 @@ describe("resolveFfmpegBin", () => {
   afterEach(() => {
     if (ORIG === undefined) delete process.env.FFMPEG_PATH;
     else process.env.FFMPEG_PATH = ORIG;
-    mockExistsSync.mockReset();
+    mockExec.mockReset();
   });
 
   it("优先使用 FFMPEG_PATH 环境变量", () => {
@@ -68,15 +69,20 @@ describe("resolveFfmpegBin", () => {
     expect(resolveFfmpegBin()).toBe("/custom/path/ffmpeg");
   });
 
-  it("FFMPEG_PATH 未设且候选路径都不存在时回退到 ffmpeg（交给 PATH）", () => {
+  it("FFMPEG_PATH 未设且候选路径都不可用（探测失败）时回退到 ffmpeg（交给 PATH）", () => {
     delete process.env.FFMPEG_PATH;
-    mockExistsSync.mockReturnValue(false);
+    mockExec.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
     expect(resolveFfmpegBin()).toBe("ffmpeg");
   });
 
-  it("探测到候选路径时返回该绝对路径（覆盖 dev server 不继承 PATH 的场景）", () => {
+  it("探测到候选路径可用时返回该绝对路径（覆盖 dev server 不继承 PATH 的场景）", () => {
     delete process.env.FFMPEG_PATH;
-    mockExistsSync.mockImplementation((p) => String(p).includes("homebrew"));
+    mockExec.mockImplementation((cmd: unknown) => {
+      if (String(cmd).includes("homebrew")) return Buffer.from("");
+      throw new Error("ENOENT");
+    });
     expect(resolveFfmpegBin()).toBe("/opt/homebrew/bin/ffmpeg");
   });
 });

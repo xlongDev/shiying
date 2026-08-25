@@ -30,6 +30,12 @@ import {
   getVideoDuration,
   safeDelete,
 } from "./media";
+import {
+  buildConcatList,
+  buildEncodeCommand,
+  curveProgress,
+  type SegmentInfo,
+} from "./compose-helpers";
 import type { ComposeProgress, LivePhotoSegment } from "./types";
 
 /**
@@ -96,12 +102,6 @@ export async function composeVideoFromImages(
   });
 
   // 每个输出片段的信息（可能是 JPEG 帧或 MP4 视频）
-  interface SegmentInfo {
-    file: string; // ffmpeg 虚拟文件系统中的文件名
-    duration: number; // 该片段时长（秒），0 表示使用默认 perImage
-    isVideo: boolean; // true=实况视频段, false=静态图帧
-  }
-
   const segments: SegmentInfo[] = new Array(totalImages);
   let liveVideoCount = 0;
 
@@ -347,21 +347,8 @@ export async function composeVideoFromImages(
     });
   }
 
-  // 生成 concat.txt
-  const concatLines: string[] = ["ffconcat version 1.0"];
-
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    concatLines.push(`file '${seg.file}'`);
-
-    // 使用该片段的实际时长（实况视频为探测到的真实时长，静态图为 effectivePerImage）
-    const segDuration = seg.duration > 0 ? seg.duration : effectivePerImage;
-    concatLines.push(`duration ${fmtDuration(segDuration)}`);
-  }
-  // concat demuxer 需要在最后再次声明最后一帧，以正确结束最后一段
-  concatLines.push(`file '${segments[segments.length - 1].file}'`);
-
-  const concatContent = concatLines.join("\n");
+  // 生成 concat.txt（含每段 duration；末尾重复声明最后一帧以正确结束）
+  const concatContent = buildConcatList(segments, effectivePerImage);
   await ffmpeg.writeFile("concat.txt", new TextEncoder().encode(concatContent));
 
   // ---- Step 4: 执行最终合成 ----
@@ -378,20 +365,7 @@ export async function composeVideoFromImages(
   //   - 用 -shortest 替代：视频以最短输入（音频）为准自动截断
   //   - 加 -movflags +faststart：确保 moov atom 前置，避免 WASM 中写入挂起
   //   - 加 -max_muxing_queue_size 128：防止多段 concat 时 muxer 队列溢出
-  const encodeCommand = ["-y", "-f", "concat", "-safe", "0", "-i", "concat.txt"];
-  if (hasMusic) {
-    encodeCommand.push("-stream_loop", "-1", "-i", "music.bin");
-  }
-  encodeCommand.push("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", "25");
-  if (hasMusic) {
-    // -shortest：当音频短于视频时，以音频长度截断视频（替代有问题的 -t）
-    encodeCommand.push("-c:a", "aac", "-b:a", "128k", "-shortest");
-  } else {
-    encodeCommand.push("-an");
-  }
-  encodeCommand.push("-movflags", "+faststart", "-max_muxing_queue_size", "128", "output.mp4");
-
-  const runCommand = encodeCommand;
+  const runCommand = buildEncodeCommand(hasMusic);
 
   // 进入合成阶段：接续静态图转换（0→30），编码从 32→100 平滑过渡
   onProgress({
@@ -405,15 +379,7 @@ export async function composeVideoFromImages(
 
   const progressHandler = ({ progress: rawProgress }: { progress: number }) => {
     lastProgressTime = Date.now();
-    const raw = Math.min(1, Math.max(0, rawProgress));
-    // 分段曲线：前段用 √ 压缩避免初期冲高；末段线性收尾快速到达 100
-    let curved: number;
-    if (raw <= 0.85) {
-      curved = Math.sqrt(raw) * 0.92;
-    } else {
-      const t = (raw - 0.85) / 0.15;
-      curved = 0.92 + t * 0.08;
-    }
+    const curved = curveProgress(rawProgress);
     const subP = Math.min(100, Math.round(32 + curved * 68));
     onProgress({
       stage: "synthesizing",

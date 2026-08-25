@@ -280,3 +280,48 @@ export function findItemInRouterData(rd: string): Record<string, unknown> | null
   if (!Array.isArray(itemList) || itemList.length === 0) return null;
   return itemList[0] as Record<string, unknown>;
 }
+
+/**
+ * 从抖音 Web 端内部 API 的原始 JSON 响应体中提取 aweme item。
+ *
+ * 抖音分享页（iesdouyin / douyin.com）现已不再把完整作品数据 SSR 内嵌进
+ * window._ROUTER_DATA，而是改由页面加载后用真实浏览器签名拉取内部 API，
+ * 例如 /aweme/v1/web/aweme/detail/，返回结构为：
+ *   { "status_code": 0, "aweme_detail": { ...完整作品... } }
+ * 部分列表接口则为 { "item_list": [ ... ] } / { "aweme_list": [ ... ] }。
+ *
+ * 浏览器兜底改为拦截这些响应直接捕获，比遍历 React fiber 树更稳健。
+ */
+export function findItemInApiJson(body: string, awemeId?: string): Record<string, unknown> | null {
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  // 1) 单对象：aweme_detail
+  const detail = json.aweme_detail;
+  if (detail && typeof detail === "object") {
+    return detail as Record<string, unknown>;
+  }
+  // 2) 数组：item_list / aweme_list / data.item_list
+  const lists: unknown[] = [json.item_list, json.aweme_list];
+  const dataObj = json.data;
+  if (dataObj && typeof dataObj === "object") {
+    lists.push((dataObj as Record<string, unknown>).item_list);
+  }
+  for (const list of lists) {
+    if (Array.isArray(list) && list.length > 0) {
+      if (awemeId) {
+        const match = list.find((it) => {
+          if (!it || typeof it !== "object") return false;
+          const o = it as Record<string, unknown>;
+          return String(o.aweme_id ?? "") === awemeId || String(o.awemeId ?? "") === awemeId;
+        });
+        if (match) return match as Record<string, unknown>;
+      }
+      return list[0] as Record<string, unknown>;
+    }
+  }
+  return null;
+}
