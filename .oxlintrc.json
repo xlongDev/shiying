@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "react", "nextjs", "jsx-a11y"],
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "restriction": "off",
+    "nursery": "off",
+    "perf": "off",
+    "style": "off"
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2022": true
+  },
+  "ignorePatterns": [
+    "node_modules/**",
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    "examples/**",
+    "skills/**",
+    "public/ffmpeg/**"
+  ],
+  "rules": {
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-non-null-assertion": "warn",
+    "typescript/ban-ts-comment": "warn",
+    "typescript/prefer-as-const": "error",
+
+    "react/exhaustive-deps": "warn",
+    "react/rules-of-hooks": "error",
+    "react/no-unescaped-entities": "error",
+    "react/display-name": "off",
+
+    "nextjs/no-img-element": "warn",
+    "nextjs/no-html-link-for-pages": "error",
+
+    "jsx-a11y/alt-text": "warn",
+
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "no-undef": "off",
+    "prefer-const": "error",
+    "no-console": "warn",
+    "no-debugger": "error",
+    "no-empty": "warn",
+    "no-irregular-whitespace": "warn",
+    "no-case-declarations": "error",
+    "no-fallthrough": "error",
+    "no-redeclare": "error",
+    "no-unreachable": "error",
+    "no-useless-escape": "warn"
+  }
+}

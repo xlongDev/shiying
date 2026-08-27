@@ -53,7 +53,7 @@ export function VideoResult({ video, onRetryLivePhoto }: VideoResultProps) {
 
   React.useEffect(() => {
     play("detect");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react/exhaustive-deps
   }, [video.awemeId]);
 
   // 图片默认不选中（用户手动勾选），但在图片变化时重置上一次的选择

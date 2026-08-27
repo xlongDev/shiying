@@ -38,7 +38,7 @@
 | 媒体处理 | `@ffmpeg/ffmpeg`（客户端 wasm）/ `ffmpeg`（服务端合成）/ `jszip`（打包） |
 | 实况解析 | puppeteer-core + chrome-finder（自动探测系统 Chrome） |
 | 测试 | Vitest 4 + Testing Library + Playwright（E2E） |
-| 工程化 | ESLint 10 · Prettier 3 · Husky + lint-staged · pnpm 11.9 |
+| 工程化 | Oxlint 1 · Prettier 3 · Husky + lint-staged · pnpm 11.9 |
 
 ## 🚀 快速开始
 
@@ -75,7 +75,7 @@ pnpm test         # 单元测试（Vitest）
 pnpm test:watch   # 监视模式
 pnpm test:e2e     # 端到端测试（Playwright）
 pnpm typecheck    # TypeScript 类型检查（tsc --noEmit）
-pnpm lint         # ESLint
+pnpm lint         # Oxlint
 pnpm format:check # Prettier 格式检查（CI 卡点）
 ```
 

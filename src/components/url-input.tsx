@@ -39,7 +39,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
       const cleaned = match ? match[1] : externalUrl;
       setUrl(cleaned);
     }
-  }, [externalUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [externalUrl]); // eslint-disable-line react/exhaustive-deps
 
   const containsVideoLink = (text: string): boolean => {
     const lower = text.toLowerCase();
@@ -90,7 +90,7 @@ export function UrlInput({ onParse, loading, externalUrl }: UrlInputProps) {
     };
 
     setTimeout(tryAutoRead, 800);
-  }, [onParse, play]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onParse, play]); // eslint-disable-line react/exhaustive-deps
 
   const handlePaste = async () => {
     try {

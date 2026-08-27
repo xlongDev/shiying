@@ -38,7 +38,7 @@ The parser uses a **two-phase** flow: return base info fast, then load Live Phot
 | Media | `@ffmpeg/ffmpeg` (client wasm) / `ffmpeg` (server compose) / `jszip` (zip) |
 | Live parsing | puppeteer-core + chrome-finder (auto-detect system Chrome) |
 | Testing | Vitest 4 + Testing Library + Playwright (E2E) |
-| Tooling | ESLint 10 · Prettier 3 · Husky + lint-staged · pnpm 11.9 |
+| Tooling | Oxlint 1 · Prettier 3 · Husky + lint-staged · pnpm 11.9 |
 
 ## 🚀 Quick Start
 
@@ -75,7 +75,7 @@ pnpm test         # unit tests (Vitest)
 pnpm test:watch   # watch mode
 pnpm test:e2e     # end-to-end tests (Playwright)
 pnpm typecheck    # TypeScript check (tsc --noEmit)
-pnpm lint         # ESLint
+pnpm lint         # Oxlint
 pnpm format:check # Prettier format check (CI gate)
 ```
 

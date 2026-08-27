@@ -51,7 +51,7 @@ export async function loadFFmpeg(onLog?: (msg: string) => void): Promise<FFmpegT
 
     await loadScript(`${FFMPEG_BASE}/ffmpeg.js`);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line typescript/no-explicit-any
     const w = window as any;
     const FFmpeg = w.FFmpegWASM?.FFmpeg;
     if (!FFmpeg) throw new Error("FFmpegWASM.FFmpeg 未找到，脚本加载可能失败");
@@ -81,7 +81,7 @@ export function unloadFFmpeg(): void {
   if (ffmpegInstance) {
     try {
       // terminate 会终止底层 Worker
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line typescript/no-explicit-any
       (ffmpegInstance as any).terminate?.();
     } catch {
       // ignore

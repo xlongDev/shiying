@@ -213,7 +213,7 @@ export function DownloadButtonRow({
                   aria-hidden="true"
                 >
                   {/* 外部 CDN 封面，用原生 img 避免 next/image 域名配置；lazy 加载 */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {/* eslint-disable-next-line nextjs/no-img-element */}
                   <img
                     src={musicMeta.cover}
                     alt=""

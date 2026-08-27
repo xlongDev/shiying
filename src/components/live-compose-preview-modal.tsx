@@ -71,7 +71,7 @@ export function LiveComposePreviewModal({
       controller.abort();
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react/exhaustive-deps
   }, [videoUrl, audioUrl, title]);
 
   React.useEffect(() => {
