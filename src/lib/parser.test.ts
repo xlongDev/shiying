@@ -15,6 +15,10 @@ import {
 // spawnSync(which chrome) 卡住。SSR 路径的回归验证不依赖浏览器。
 vi.mock("./browser-router-data", () => ({
   loadRouterDataViaBrowser: vi.fn(async () => null),
+  // 测试中无启动期预热带，isPrewarmPending 恒为 false，awaitPrewarm 为空操作，
+  // 避免 a_bogus 首轮失败后等待一个不存在的预热带。
+  isPrewarmPending: vi.fn(() => false),
+  awaitPrewarm: vi.fn(async () => {}),
 }));
 
 /* ------------------------------------------------------------------ */
@@ -243,21 +247,25 @@ describe("parseVideo", () => {
   });
 
   it("throws NO_ROUTER_DATA when the share page has no router payload", async () => {
-    fetchMock.mockResolvedValue(new Response("<html><body>no data</body></html>", { status: 200 }));
+    fetchMock.mockImplementation(
+      () => new Response("<html><body>no data</body></html>", { status: 200 })
+    );
     await expect(
       parseVideo("https://www.iesdouyin.com/share/video/123/", { skipLivePhoto: true })
     ).rejects.toMatchObject({ code: "NO_ROUTER_DATA" });
   });
 
   it("throws SLIDES_NO_DATA when slides SSR yields no images", async () => {
-    fetchMock.mockResolvedValue(new Response("<html><body>no data</body></html>", { status: 200 }));
+    fetchMock.mockImplementation(
+      () => new Response("<html><body>no data</body></html>", { status: 200 })
+    );
     await expect(
       parseVideo("https://www.douyin.com/share/slides/777/", { skipLivePhoto: true })
     ).rejects.toMatchObject({ code: "SLIDES_NO_DATA" });
   });
 
   it("parses a normal video and strips the watermark url", async () => {
-    fetchMock.mockResolvedValue(new Response(buildRouterHtml(videoData), { status: 200 }));
+    fetchMock.mockImplementation(() => new Response(buildRouterHtml(videoData), { status: 200 }));
     const r = await parseVideo("https://www.iesdouyin.com/share/video/123/", {
       skipLivePhoto: true,
     });
@@ -272,7 +280,7 @@ describe("parseVideo", () => {
   });
 
   it("parses a note (image post) and prefers tplv aweme images", async () => {
-    fetchMock.mockResolvedValue(new Response(buildRouterHtml(noteData), { status: 200 }));
+    fetchMock.mockImplementation(() => new Response(buildRouterHtml(noteData), { status: 200 }));
     const r = await parseVideo("https://www.iesdouyin.com/share/note/123/", {
       skipLivePhoto: true,
     });

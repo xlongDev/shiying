@@ -52,7 +52,8 @@ export async function parseDouyin(
   }
 
   // 3. 获取 aweme item（多源 fallback：SSR → a_bogus 签名 API → 浏览器兜底）
-  const item = await fetchAwemeItem(awemeId);
+  //    透传链接类型，让浏览器兜底按类型排序候选（视频优先 douyin.com/video）。
+  const item = await fetchAwemeItem(awemeId, { type: contentType });
   if (!item) {
     throw new ParseError("页面数据提取失败，可能接口已变更", "NO_ROUTER_DATA");
   }

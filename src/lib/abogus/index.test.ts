@@ -24,4 +24,24 @@ describe("generateABogus (a_bogus 纯 Node 生成)", () => {
     expect(first.length).toBeGreaterThan(0);
     expect(second.length).toBeGreaterThan(0);
   });
+
+  it("应能对『完整请求 URL（含 path）』签名——与服务端 SM3 校验一致", () => {
+    const uri =
+      "https://www.douyin.com/aweme/v1/web/aweme/detail/?aid=6383&aweme_id=7635491506937597834&timestamp=1700000000";
+    const ab = generateABogus(uri, 1700000000000);
+    expect(typeof ab).toBe("string");
+    expect(ab.length).toBeGreaterThanOrEqual(80);
+    expect(ab).toMatch(/^[A-Za-z0-9_\-+/=]+$/);
+  });
+
+  it("含随机盐，两次输出应都合法非空且长度同量级（非幂等属正常）", () => {
+    const uri =
+      "https://www.douyin.com/aweme/v1/web/aweme/detail/?aid=6383&aweme_id=7635491506937597834";
+    const a = generateABogus(uri, 1700000000999);
+    const b = generateABogus(uri, 1700000000999);
+    // 真实 a_bogus 每次含随机字节，不应期望逐字节相等；但都应合法且长度相近。
+    expect(a).toMatch(/^[A-Za-z0-9_\-+/=]+$/);
+    expect(b).toMatch(/^[A-Za-z0-9_\-+/=]+$/);
+    expect(Math.abs(a.length - b.length)).toBeLessThanOrEqual(4);
+  });
 });

@@ -88,6 +88,15 @@ export const config = {
     get enableDiagnostics(): boolean {
       return readBool("ENABLE_DIAGNOSTICS");
     },
+    /**
+     * 禁用无头浏览器兜底（默认 false）。
+     * 设为 true 时，解析链路在 SSR + a_bogus 都失败后不再尝试启动 Chrome，
+     * 直接返回失败。适用于明确"不依赖 Chrome"的部署形态（如国内部署机走纯 a_bogus
+     * 直连、海外 serverless 走国内签名桥），可省去每次请求探测 Chrome 路径的开销与日志噪声。
+     */
+    get disableBrowserFallback(): boolean {
+      return readBool("DISABLE_BROWSER_FALLBACK");
+    },
   },
 };
 

@@ -40,14 +40,28 @@ export const CHROME_ARGS = [
   "--disable-web-security",
 ];
 
-let sharedBrowser: import("puppeteer-core").Browser | null = null;
-let browserLaunchPromise: Promise<import("puppeteer-core").Browser | null> | null = null;
-let cleanupRegistered = false;
+// 跨模块实例共享的浏览器句柄。Next.js 的 instrumentation（register()）与路由
+// handler 可能被打包为不同模块实例；若仅用模块级 let，prewarm 预热的是实例 A 的
+// 浏览器，而请求用到的是实例 B 重新冷启动的浏览器（日志里"双 cold 启动"即此原因）。
+// 挂到 globalThis 可保证二者共享同一台常驻浏览器，预热真正生效。
+interface BrowserHolder {
+  sharedBrowser: import("puppeteer-core").Browser | null;
+  browserLaunchPromise: Promise<import("puppeteer-core").Browser | null> | null;
+  cleanupRegistered: boolean;
+}
+const g = globalThis as unknown as { __shiyingBrowser?: BrowserHolder };
+const holder: BrowserHolder =
+  g.__shiyingBrowser ??
+  (g.__shiyingBrowser = {
+    sharedBrowser: null,
+    browserLaunchPromise: null,
+    cleanupRegistered: false,
+  });
 
 /** 进程退出时关闭常驻浏览器（仅注册一次），避免孤儿 Chrome 占用资源 */
 function registerBrowserCleanup(browser: import("puppeteer-core").Browser): void {
-  if (cleanupRegistered) return;
-  cleanupRegistered = true;
+  if (holder.cleanupRegistered) return;
+  holder.cleanupRegistered = true;
   const closeOnce = () => {
     browser.close().catch(() => {});
   };
@@ -64,16 +78,16 @@ function registerBrowserCleanup(browser: import("puppeteer-core").Browser): void
  * 注意：本函数不持有 puppeteerSemaphore（信号量用于限制并发 page，见 acquirePage）。
  */
 export async function getSharedBrowser(): Promise<import("puppeteer-core").Browser | null> {
-  if (sharedBrowser && sharedBrowser.connected) {
-    return sharedBrowser;
+  if (holder.sharedBrowser && holder.sharedBrowser.connected) {
+    return holder.sharedBrowser;
   }
-  if (browserLaunchPromise) return browserLaunchPromise;
+  if (holder.browserLaunchPromise) return holder.browserLaunchPromise;
 
-  browserLaunchPromise = (async () => {
+  holder.browserLaunchPromise = (async () => {
     const chromePath = await findChromeExecutable();
     if (!chromePath) {
       logger.warn("browser-pool", "未找到系统 Chrome，跳过浏览器兜底");
-      browserLaunchPromise = null;
+      holder.browserLaunchPromise = null;
       return null;
     }
 
@@ -82,7 +96,7 @@ export async function getSharedBrowser(): Promise<import("puppeteer-core").Brows
       puppeteer = await import("puppeteer-core");
     } catch (err) {
       logger.warn("browser-pool", "puppeteer-core 未安装，跳过浏览器兜底", err);
-      browserLaunchPromise = null;
+      holder.browserLaunchPromise = null;
       return null;
     }
 
@@ -97,22 +111,22 @@ export async function getSharedBrowser(): Promise<import("puppeteer-core").Brows
       });
       b.on("disconnected", () => {
         // 进程崩溃：置空，下次请求重启动
-        sharedBrowser = null;
-        browserLaunchPromise = null;
+        holder.sharedBrowser = null;
+        holder.browserLaunchPromise = null;
       });
-      sharedBrowser = b;
+      holder.sharedBrowser = b;
       registerBrowserCleanup(b);
       logger.info("browser-pool", "启动常驻浏览器（cold）");
       return b;
     } catch (err) {
       logger.warn("browser-pool", "共享浏览器启动失败:", err);
-      sharedBrowser = null;
-      browserLaunchPromise = null;
+      holder.sharedBrowser = null;
+      holder.browserLaunchPromise = null;
       return null;
     }
   })();
 
-  return browserLaunchPromise;
+  return holder.browserLaunchPromise;
 }
 
 /**
@@ -156,6 +170,16 @@ export async function releasePage(page: import("puppeteer-core").Page | null): P
 }
 
 /**
+ * 启动期预拉起常驻浏览器，消除首条解析请求的冷启动成本(~1.5s)。
+ * 非阻塞：仅触发启动，不等待完成；失败静默（无 Chrome / puppeteer 未装时自动跳过）。
+ * 设 DISABLE_BROWSER_FALLBACK=true 时不预拉（ponytail: 明确不依赖 Chrome 的部署形态）。
+ */
+export function prewarmBrowser(): void {
+  if (process.env.DISABLE_BROWSER_FALLBACK === "true") return;
+  void getSharedBrowser().catch(() => {});
+}
+
+/**
  * 导航到目标 URL 并等待页面 hydration（出现图片查看器 / note 容器 / video 即代表
  * 数据已挂载），随后轮询等待 _ROUTER_DATA 注入或 fiber 就绪，避免 SPA 异步注入
  * 数据途中就读取导致漏检 / Execution context destroyed。
@@ -182,7 +206,7 @@ export async function navigateAndWait(
         !!document.querySelector(".dySwiperSlide") ||
         !!document.querySelector(".note-detail-container") ||
         !!document.querySelector("video"),
-      { timeout: 5000 }
+      { timeout: 3000 }
     );
   } catch {
     // 超时也继续，下面仍有固定等待兜底
@@ -203,7 +227,7 @@ export async function navigateAndWait(
         const key = Object.keys(seed).find((k) => k.startsWith("__reactFiber"));
         return !!key;
       },
-      { timeout: 6000, polling: 800 }
+      { timeout: 4000, polling: 800 }
     );
   } catch {
     // 超时也继续，下面的提取仍有兜底

@@ -305,14 +305,16 @@ export function findItemInApiJson(body: string, awemeId?: string): Record<string
     return detail as Record<string, unknown>;
   }
   // 2) 数组：item_list / aweme_list / data.item_list
+  //    必须严格按 awemeId 匹配，否则相关推荐/搜索/feed 等列表接口的
+  //    list[0] 会被误当成目标作品（如 image/related 返回的是别的 note）。
   const lists: unknown[] = [json.item_list, json.aweme_list];
   const dataObj = json.data;
   if (dataObj && typeof dataObj === "object") {
     lists.push((dataObj as Record<string, unknown>).item_list);
   }
-  for (const list of lists) {
-    if (Array.isArray(list) && list.length > 0) {
-      if (awemeId) {
+  if (awemeId) {
+    for (const list of lists) {
+      if (Array.isArray(list)) {
         const match = list.find((it) => {
           if (!it || typeof it !== "object") return false;
           const o = it as Record<string, unknown>;
@@ -320,7 +322,13 @@ export function findItemInApiJson(body: string, awemeId?: string): Record<string
         });
         if (match) return match as Record<string, unknown>;
       }
-      return list[0] as Record<string, unknown>;
+    }
+  } else {
+    // 未提供 awemeId 时仅接受单元素列表（如 detail 降级场景），避免误取推荐列表首项
+    for (const list of lists) {
+      if (Array.isArray(list) && list.length === 1) {
+        return list[0] as Record<string, unknown>;
+      }
     }
   }
   return null;

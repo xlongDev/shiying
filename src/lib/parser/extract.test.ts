@@ -93,4 +93,27 @@ describe("findItemInApiJson", () => {
     expect(findItemInApiJson(JSON.stringify({ status_code: 1 }))).toBeNull();
     expect(findItemInApiJson("")).toBeNull();
   });
+
+  it("回归：相关推荐/列表接口 list[0] 非目标作品时返回 null（不误取他人作品）", () => {
+    // 复现用户日志中的 400：浏览器兜底拦截到 /web/api/v2/image/related/
+    // 返回的 list[0] 是另一个 note（aweme_id=7677050352025443466），
+    // 而目标作品为 7650923424965191668。旧实现会 fallback 到 list[0] 返回错误作品。
+    const body = JSON.stringify({
+      status_code: 0,
+      item_list: [
+        {
+          aweme_id: "7677050352025443466",
+          desc: "定格时光照相馆的笔记",
+          author: { nickname: "定格时光照相馆" },
+        },
+        {
+          aweme_id: "7677050352025443467",
+          desc: "另一个无关作品",
+          author: { nickname: "路人甲" },
+        },
+      ],
+    });
+    const item = findItemInApiJson(body, "7650923424965191668");
+    expect(item).toBeNull();
+  });
 });
